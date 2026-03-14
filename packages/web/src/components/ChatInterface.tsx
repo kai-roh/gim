@@ -176,17 +176,20 @@ export function ChatInterface() {
             addMessage("system", `Unknown command: ${cmd}`);
         }
       } else {
-        // Forum feedback injection
+        // Forum feedback injection → run 1 convergence round → graph & 3D update
         if (forum.state.sessionId) {
           try {
-            await fetch(`/api/forum/${forum.state.sessionId}/inject`, {
+            const injectResp = await fetch(`/api/forum/${forum.state.sessionId}/inject`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ feedback: trimmed }),
+              body: JSON.stringify({ message: trimmed }),
             });
-            addMessage("system", "Feedback injected into forum session.");
+            if (!injectResp.ok) throw new Error("Inject failed");
+            addMessage("system", "Feedback injected. Running 1 convergence round...");
+            await forum.runPhase("convergence");
+            addMessage("system", "Done. Graph & 3D viewer updated.");
           } catch {
-            addMessage("system", "Failed to inject feedback.");
+            addMessage("system", "Failed to process feedback.");
           }
         } else {
           addMessage("system", "No active forum session. Start a forum first or use /commands.");
