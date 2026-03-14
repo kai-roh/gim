@@ -322,6 +322,8 @@ floor_node:
 
 ### 4.3 엣지 타입
 
+**수직 노드 그래프 엣지 (Voxel Graph):**
+
 | 관계 | 의미 | 속성 |
 |---|---|---|
 | `STACKED_ON` | 수직 적층 (층간 관계) | structural_continuity: boolean |
@@ -332,6 +334,19 @@ floor_node:
 | `ZONE_BOUNDARY` | 수직 존 경계 | transition_type: hard / gradient / sky_lobby |
 | `FACES` | 외부 조건 대면 | target: view / road / adjacent_building / park |
 | `STRUCTURAL_TRANSFER` | 구조 전이 (트랜스퍼 층) | system: outrigger / belt_truss / mega_column |
+
+**프로그램 그래프 엣지 (Building-GAN Local Graph 적용):**
+
+건축가 토론 합의 결과를 프로그램 인접 관계 그래프로 정형화한다. 이 그래프가 수직 노드 그래프 자동 생성의 입력(제약 조건)이 된다.
+
+| 관계 | 의미 | 예시 |
+|---|---|---|
+| `PROGRAM_ADJACENT` (positive) | 인접 배치 필요 | 오피스 ↔ 코어, 로비 ↔ 리테일 |
+| `PROGRAM_SEPARATE_SAME_ZONE` (negative) | 같은 존 내 분리 필요 | 기계실 ↔ 로비, 주차 ↔ 리테일 |
+| `PROGRAM_SEPARATE_CROSS_ZONE` (negative) | 다른 존 간 분리 제약 | 지하주차 ↔ 호텔객실 |
+| `VERTICAL_CONTINUITY` | 수직 정렬 필수 | 코어는 전층 동일 위치, 샤프트 연속 |
+
+이 positive/negative 엣지 구조는 Building-GAN의 contrastive learning 방식에서 차용한 것으로, 프로그램 배치의 제약 조건을 명시적으로 인코딩한다.
 
 ### 4.4 노드 function 분류
 
@@ -347,7 +362,97 @@ floor_node:
 | PARKING | underground_parking, loading_dock, car_lift | 지하부 |
 | STRUCTURAL | transfer_floor, outrigger_level, mega_column_node | 구조 전이층 |
 
-### 4.5 실시간 노드 편집
+### 4.5 3-그래프 아키텍처 (Building-GAN 적용)
+
+Autodesk AI Lab의 Building-GAN(ICCV 2021)에서 제안된 3-그래프 건물 표현 체계를 GIM에 적용한다.
+
+#### 개념 매핑
+
+```
+Building-GAN                          GIM
+─────────────                         ───
+Global Graph (FAR, 용도 비율)     ←→   Project SOT (대지 제약, 용적률, 프로그램 비율)
+Local Graph (버블 다이어그램)      ←→   건축가 토론 합의 출력 (프로그램 인접 관계)
+Voxel Graph (3D 공간 격자)        ←→   수직 노드 그래프 (층별 프로그램 배치)
+Cross-Modal Attention             ←→   합의 → 노드 그래프 자동 변환 브릿지
+Multi-Scale Discriminator         ←→   3-스케일 평가 (층→존→빌딩)
+```
+
+#### 데이터 플로우
+
+```
+[건축가 토론 합의]
+    │
+    ▼
+[프로그램 그래프 생성]
+ - 노드: 프로그램 타입 + 수직 존 + 목표 비율
+ - positive 엣지: 인접 배치 제약
+ - negative 엣지: 분리 배치 제약
+    │
+    ▼
+[크로스모달 변환 (Cross-Modal Bridge)]
+ - 프로그램 그래프 노드 → 수직 노드 그래프 노드로 매핑
+ - 같은 수직 존 내에서만 매핑 (story-level alignment)
+ - Gumbel-softmax 기반 프로그램 타입 할당 (Building-GAN 방식)
+    │
+    ▼
+[수직 노드 그래프 자동 생성]
+ - 프로그램 제약을 만족하는 층별 노드 배치
+ - 연결성 정확도(Connectivity Accuracy) 검증
+```
+
+#### 층 위치 인코딩 (Floor Positional Encoding)
+
+Building-GAN의 사인파 위치 인코딩을 초고층에 맞게 확장한다.
+
+```
+PE(floor, 2i)   = sin(floor / 10000^(2i/d))
+PE(floor, 2i+1) = cos(floor / 10000^(2i/d))
+
+d = 128 (인코딩 차원)
+max_len = 150 (100층+ 초고층 대응, Building-GAN 원본은 20)
+```
+
+각 노드의 `floor_level`을 이 벡터로 인코딩하여, 수직적 위치 관계(위/아래, 거리)를 연속적 벡터 공간에서 표현한다. 이를 통해:
+- 인접 층(1층 차이)과 원거리 층(30층 차이)의 관계가 자연스럽게 구분
+- 수직 존 경계를 학습 가능한 패턴으로 인코딩
+- 구조 전이층, 기계층 등 특수 층의 위치를 벡터로 표현
+
+#### 프로그램 그래프 스키마
+
+```yaml
+program_graph:
+  nodes:
+    - id: string              # "pg_office_mid"
+      program_type: string    # function enum 값
+      target_zone: string     # 목표 수직 존
+      floor_range: [int, int] # 배치 가능 층 범위
+      area_ratio: number      # 전체 면적 대비 목표 비율
+
+  edges:
+    - source: string
+      target: string
+      type: enum              # PROGRAM_ADJACENT | PROGRAM_SEPARATE_SAME_ZONE
+                              # | PROGRAM_SEPARATE_CROSS_ZONE | VERTICAL_CONTINUITY
+      weight: number          # 0.0~1.0 (제약 강도)
+      rationale: string       # "건축가 토론에서 합의된 이유"
+```
+
+#### Building-GAN 원본 대비 GIM 적용 변경점
+
+| 항목 | Building-GAN 원본 | GIM 적용 |
+|---|---|---|
+| 프로그램 타입 | 6개 (residential, commercial 등) | 30+개 (초고층 특화 function enum) |
+| 복셀 격자 | 50×40×40 (중저층 비례) | 100+×20×20 (초고층 수직 종횡비) |
+| 층 위치 인코딩 | max_len=20 | max_len=150 |
+| 엣지 타입 | 수평 인접만 | 수직 연속성 제약 추가 (코어/샤프트 정렬) |
+| 평가 스케일 | story + building (2-스케일) | floor + zone + building (3-스케일) |
+| 입력 소스 | 정적 버블 다이어그램 | 건축가 토론 합의 (동적, 반복 가능) |
+| 훈련 데이터 | 96,000 건물 샘플 | 룰 기반 + LLM 추론 하이브리드 (데이터 없이 시작) |
+
+> **참고**: Building-GAN은 대규모 훈련 데이터(96K 샘플)로 GNN을 학습시키는 방식이지만, GIM은 해커톤 단계에서 훈련 데이터가 없으므로 **룰 기반 배치 + LLM 추론**으로 프로그램 그래프 → 수직 노드 그래프 변환을 수행한다. Building-GAN의 3-그래프 구조와 프로그램 인접 제약 표현 체계를 차용하되, 생성 방식은 GNN 대신 초고층 설계 룰셋 + Claude 추론으로 대체한다. 향후 프로젝트 데이터가 축적되면 GNN 기반 생성으로 전환 가능하다.
+
+### 4.6 실시간 노드 편집
 
 지원 편집 작업:
 - 노드 추가/삭제: 특정 층에 새 프로그램 추가 또는 제거
@@ -385,6 +490,19 @@ W2 노드 편집 이벤트
 | 경제성 | 연면적 대비 전용률, 프리미엄 층 비율, 주차 대수 충족 | 산식 기반 |
 | 도시 맥락 | 저층부 공공 기여도, 보행 접근성, 주변 스카이라인 조화 | LLM 추론 |
 | 3D 형태 | Rhino 모델 기반 매스 비례, 입면 일관성, 구조체 정합성 | 3D 분석 룰 + MCP |
+| 그래프 연결성 | 프로그램 인접 관계 유지율, 수직 연속성 정합도 | 그래프 분석 |
+
+#### 연결성 정확도 (Connectivity Accuracy)
+
+Building-GAN에서 도입된 정량 메트릭을 GIM 평가 모델에 적용한다.
+
+```
+Connectivity Accuracy = (유지된 positive 엣지 수) / (전체 positive 엣지 수)
+```
+
+- 건축가 토론에서 합의한 프로그램 인접 관계(positive 엣지)가 최종 노드 그래프에서 실제로 유지되는 비율
+- 수직 연속성 정합도: 코어, 엘리베이터 샤프트 등 전층 관통 요소의 수직 정렬 유지 비율
+- 이 메트릭이 낮으면 → 평가 피드백에 "합의된 인접 관계 미충족" 이슈로 건축가 토론장에 전달
 
 ### 5.2 피드백 출력 스키마
 
@@ -404,7 +522,7 @@ W2 노드 편집 이벤트
 }
 ```
 
-dimension_key: `structural`, `environmental`, `code_compliance`, `economic`, `urban_context`, `3d_form`
+dimension_key: `structural`, `environmental`, `code_compliance`, `economic`, `urban_context`, `3d_form`, `connectivity`
 
 ---
 
