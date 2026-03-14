@@ -36,12 +36,18 @@ export function ForumPanel() {
       .catch(() => {});
   }, [dispatch]);
 
-  // Auto-scroll on new messages or streaming
+  // Smart auto-scroll: only scroll to bottom if user is already near the bottom
+  const isNearBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }, []);
+
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (isNearBottom()) {
+      scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
     }
-  }, [state.messages, state.streamingTokens]);
+  }, [state.messages, state.streamingTokens, isNearBottom]);
 
   // Load session history
   const loadSessions = useCallback(async () => {
