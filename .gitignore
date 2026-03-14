@@ -10,3 +10,10 @@ graph_output/*.json
 .next/
 out/
 next-env.d.ts
+
+# Generated render outputs
+packages/web/public/renders/*.png
+packages/web/public/renders/*.json
+
+# Build artifacts
+packages/web/tsconfig.tsbuildinfo
