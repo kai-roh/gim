@@ -10,14 +10,15 @@ type FloorPosition = FloorNode["position"];
 
 const NODE_FUNCTION_CATEGORY: Record<string, NodeFunction[]> = {
   CORE: ["elevator_core", "stairwell", "elevator_lobby", "service_shaft"],
-  OFFICE: ["open_office", "premium_office", "executive_suite", "coworking"],
-  HOTEL: ["hotel_room", "hotel_suite", "hotel_lobby", "hotel_amenity"],
-  RETAIL: ["retail", "restaurant", "cultural_facility"],
-  PUBLIC: ["public_void", "sky_garden", "observation_deck", "sky_lounge", "refuge_area"],
-  SOCIAL: ["conference", "fitness", "spa", "library", "gallery", "rooftop_bar"],
-  MECHANICAL: ["mechanical_room", "electrical_room", "water_tank"],
-  PARKING: ["parking", "loading_dock"],
-  STRUCTURAL: ["outrigger", "belt_truss"],
+  OFFICE: ["open_office", "premium_office", "executive_suite", "coworking", "focus_room"],
+  EXPERIENCE: ["brand_showroom", "exhibition_hall", "experiential_retail", "installation_space"],
+  RETAIL: ["cafe", "flagship_store"],
+  PUBLIC: ["lobby", "atrium", "public_void", "community_space", "event_space"],
+  SOCIAL: ["lounge", "meditation_room"],
+  AMENITY: ["cafeteria", "meeting_room", "auditorium", "nursery"],
+  OUTDOOR: ["sky_garden", "rooftop_bar", "gallery"],
+  MECHANICAL: ["mechanical_room", "electrical_room", "server_room"],
+  PARKING: ["parking", "loading_dock", "bicycle_storage"],
 };
 
 const ALL_FUNCTIONS: NodeFunction[] = Object.values(NODE_FUNCTION_CATEGORY).flat() as NodeFunction[];
@@ -28,8 +29,8 @@ const ALL_POSITIONS: FloorPosition[] = [
 ];
 
 const ALL_ZONES: FloorZone[] = [
-  "basement", "podium", "low_rise", "mid_rise", "sky_lobby",
-  "high_rise", "mechanical", "crown", "rooftop",
+  "basement", "ground", "lower", "middle",
+  "upper", "penthouse", "rooftop",
 ];
 
 export function NodeEditor() {
@@ -190,7 +191,7 @@ function AddNodeSection() {
   const handleAdd = useCallback(() => {
     if (!state.graph) return;
     const id = `node_custom_${Date.now()}`;
-    const zone = state.graph.nodes.find((n) => n.floor_level === newFloor)?.floor_zone || "mid_rise";
+    const zone = state.graph.nodes.find((n) => n.floor_level === newFloor)?.floor_zone || "middle";
     const node: FloorNode = {
       id,
       name: `${newFunc}_F${newFloor}`,
@@ -202,8 +203,8 @@ function AddNodeSection() {
       abstract: {
         view_premium: 0.5,
         publicity: 0.5,
-        structural_load: 0.5,
-        vertical_flow: 0.5,
+        brand_expression: 0.5,
+        spatial_quality: 0.5,
         prestige: 0.5,
         flexibility: 0.5,
       },

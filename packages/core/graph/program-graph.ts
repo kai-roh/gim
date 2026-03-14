@@ -5,6 +5,7 @@
 
 import type {
   ForumResult,
+  GlobalGraph,
   ProgramGraph,
   ProgramNode,
   ProgramEdge,
@@ -12,6 +13,7 @@ import type {
   NodeFunction,
   ConsensusZone,
   DesignRules,
+  VerticalNodeGraph,
 } from "./types";
 import type { ArchitectResponse, VerticalZoneProposal } from "../forum/types";
 import { classifyFloorZone, getDefaultRules, getDefaultAdjacencyRules } from "./rules";
@@ -30,74 +32,97 @@ const FUNCTION_MAPPINGS: Record<string, NodeFunction> = {
   "오피스": "open_office",
   "사무실": "open_office",
   "프리미엄 오피스": "premium_office",
-  "호텔": "hotel_room",
-  "호텔 객실": "hotel_room",
-  "호텔 스위트": "hotel_suite",
-  "호텔 로비": "hotel_lobby",
-  "리테일": "retail",
-  "상업": "retail",
-  "문화시설": "cultural_facility",
-  "전망대": "observation_deck",
-  "스카이라운지": "sky_lounge",
-  "스카이 라운지": "sky_lounge",
-  "스카이가든": "sky_garden",
-  "스카이 가든": "sky_garden",
+  "임원실": "executive_suite",
+  "브랜드 쇼룸": "brand_showroom",
+  "쇼룸": "brand_showroom",
+  "전시홀": "exhibition_hall",
+  "전시": "exhibition_hall",
+  "체험형 리테일": "experiential_retail",
+  "리테일": "experiential_retail",
+  "상업": "experiential_retail",
+  "인스톨레이션": "installation_space",
+  "카페": "cafe",
+  "플래그십": "flagship_store",
+  "플래그십 스토어": "flagship_store",
+  "로비": "lobby",
+  "아트리움": "atrium",
   "공공보이드": "public_void",
   "공공 보이드": "public_void",
-  "피난안전구역": "refuge_area",
-  "피난층": "refuge_area",
-  "레스토랑": "restaurant",
-  "도서관": "library",
-  "갤러리": "gallery",
-  "스파": "spa",
-  "코워킹": "coworking",
-  "컨퍼런스": "conference",
-  "피트니스": "fitness",
+  "커뮤니티": "community_space",
+  "이벤트": "event_space",
+  "이벤트 공간": "event_space",
+  "라운지": "lounge",
+  "명상실": "meditation_room",
+  "구내식당": "cafeteria",
+  "카페테리아": "cafeteria",
+  "회의실": "meeting_room",
+  "미팅룸": "meeting_room",
+  "오디토리움": "auditorium",
+  "강당": "auditorium",
+  "어린이집": "nursery",
+  "스카이가든": "sky_garden",
+  "스카이 가든": "sky_garden",
+  "루프탑가든": "sky_garden",
+  "옥상정원": "sky_garden",
   "루프탑바": "rooftop_bar",
-  "로딩독": "loading_dock",
+  "갤러리": "gallery",
+  "코워킹": "coworking",
+  "포커스룸": "focus_room",
+  "집중근무실": "focus_room",
   "전기실": "electrical_room",
-  "물탱크": "water_tank",
+  "서버룸": "server_room",
+  "자전거": "bicycle_storage",
+  "로딩독": "loading_dock",
 
   // English mappings
   "parking": "parking",
   "mechanical": "mechanical_room",
+  "mechanical_room": "mechanical_room",
   "office": "open_office",
+  "open_office": "open_office",
   "premium_office": "premium_office",
-  "hotel": "hotel_room",
-  "hotel_room": "hotel_room",
-  "hotel_suite": "hotel_suite",
-  "hotel_lobby": "hotel_lobby",
-  "hotel_amenity": "hotel_amenity",
-  "retail": "retail",
-  "retail_culture": "retail",
-  "restaurant": "restaurant",
-  "cultural_facility": "cultural_facility",
-  "observation_deck": "observation_deck",
-  "observation": "observation_deck",
-  "sky_lounge": "sky_lounge",
-  "sky_lounge_observation": "sky_lounge",
-  "sky_garden": "sky_garden",
-  "sky_park": "sky_garden",
+  "executive_suite": "executive_suite",
+  "brand_showroom": "brand_showroom",
+  "brand_experience": "brand_showroom",
+  "exhibition_hall": "exhibition_hall",
+  "experiential_retail": "experiential_retail",
+  "retail": "experiential_retail",
+  "retail_culture": "experiential_retail",
+  "installation_space": "installation_space",
+  "installation": "installation_space",
+  "cafe": "cafe",
+  "flagship_store": "flagship_store",
+  "lobby": "lobby",
+  "atrium": "atrium",
   "public_void": "public_void",
   "void": "public_void",
-  "refuge_area": "refuge_area",
-  "refuge": "refuge_area",
-  "refuge_mechanical": "refuge_area",
-  "library": "library",
-  "gallery": "gallery",
-  "spa": "spa",
-  "coworking": "coworking",
-  "conference": "conference",
-  "fitness": "fitness",
+  "community_space": "community_space",
+  "event_space": "event_space",
+  "lounge": "lounge",
+  "meditation_room": "meditation_room",
+  "cafeteria": "cafeteria",
+  "meeting_room": "meeting_room",
+  "auditorium": "auditorium",
+  "nursery": "nursery",
+  "sky_garden": "sky_garden",
+  "sky_park": "sky_garden",
   "rooftop_bar": "rooftop_bar",
+  "rooftop": "sky_garden",
+  "gallery": "gallery",
+  "coworking": "coworking",
+  "focus_room": "focus_room",
+  "electrical_room": "electrical_room",
+  "server_room": "server_room",
+  "bicycle_storage": "bicycle_storage",
   "loading_dock": "loading_dock",
   "elevator_core": "elevator_core",
   "stairwell": "stairwell",
-  "outrigger": "outrigger",
-  "belt_truss": "belt_truss",
+  "elevator_lobby": "elevator_lobby",
+  "service_shaft": "service_shaft",
   "parking_mechanical": "parking",
-  "hybrid_transition": "elevator_lobby",
-  "hotel_office_hybrid": "hotel_room",
+  "creative_lab": "coworking",
+  "executive_lounge": "lounge",
+  "support": "mechanical_room",
   "transit": "elevator_lobby",
 };
 
@@ -115,18 +140,22 @@ export function normalizeFunctionName(raw: string): NodeFunction {
   // Keyword-based fallback
   if (lower.includes("parking") || lower.includes("주차")) return "parking";
   if (lower.includes("mechani") || lower.includes("기계")) return "mechanical_room";
-  if (lower.includes("hotel") || lower.includes("호텔")) return "hotel_room";
   if (lower.includes("office") || lower.includes("오피스") || lower.includes("사무")) return "open_office";
-  if (lower.includes("retail") || lower.includes("상업") || lower.includes("리테일")) return "retail";
-  if (lower.includes("culture") || lower.includes("문화")) return "cultural_facility";
-  if (lower.includes("observ") || lower.includes("전망")) return "observation_deck";
-  if (lower.includes("lounge") || lower.includes("라운지")) return "sky_lounge";
+  if (lower.includes("showroom") || lower.includes("쇼룸")) return "brand_showroom";
+  if (lower.includes("brand") || lower.includes("브랜드")) return "brand_showroom";
+  if (lower.includes("exhib") || lower.includes("전시")) return "exhibition_hall";
+  if (lower.includes("retail") || lower.includes("상업") || lower.includes("리테일")) return "experiential_retail";
+  if (lower.includes("install") || lower.includes("인스톨")) return "installation_space";
+  if (lower.includes("cafe") || lower.includes("카페")) return "cafe";
+  if (lower.includes("lounge") || lower.includes("라운지")) return "lounge";
   if (lower.includes("garden") || lower.includes("가든") || lower.includes("park") || lower.includes("공원")) return "sky_garden";
   if (lower.includes("void") || lower.includes("보이드")) return "public_void";
-  if (lower.includes("refuge") || lower.includes("피난")) return "refuge_area";
-  if (lower.includes("restaurant") || lower.includes("레스토랑")) return "restaurant";
-  if (lower.includes("spire") || lower.includes("첨탑") || lower.includes("crown") || lower.includes("크라운")) return "sky_lounge";
-  if (lower.includes("lobby") || lower.includes("로비")) return "elevator_lobby";
+  if (lower.includes("atrium") || lower.includes("아트리움")) return "atrium";
+  if (lower.includes("gallery") || lower.includes("갤러리")) return "gallery";
+  if (lower.includes("lobby") || lower.includes("로비")) return "lobby";
+  if (lower.includes("event") || lower.includes("이벤트")) return "event_space";
+  if (lower.includes("meeting") || lower.includes("회의")) return "meeting_room";
+  if (lower.includes("executive") || lower.includes("임원")) return "executive_suite";
 
   // Default fallback
   return "open_office";
@@ -140,16 +169,14 @@ function normalizeZoneName(raw: string): FloorZone {
   const lower = raw.toLowerCase().trim();
   const zoneMap: Record<string, FloorZone> = {
     basement: "basement",
-    podium: "podium",
-    low_rise: "low_rise",
-    mid_rise: "mid_rise",
-    sky_lobby: "sky_lobby",
-    high_rise: "high_rise",
-    mechanical: "mechanical",
-    crown: "crown",
+    ground: "ground",
+    lower: "lower",
+    middle: "middle",
+    upper: "upper",
+    penthouse: "penthouse",
     rooftop: "rooftop",
   };
-  return zoneMap[lower] ?? "mid_rise";
+  return zoneMap[lower] ?? "middle";
 }
 
 // ============================================================
@@ -409,16 +436,29 @@ function inferAdjacencyEdges(
 
   // 4. PROGRAM_DEPENDENCY edges
   for (const node of nodes) {
-    // Hotel depends on hotel_lobby
-    if (node.program_type === "hotel_room" || node.program_type === "hotel_suite") {
-      const lobby = nodes.find((n) => n.program_type === "hotel_lobby" || n.program_type === "elevator_lobby");
+    // Brand showroom depends on lobby
+    if (node.program_type === "brand_showroom" || node.program_type === "experiential_retail") {
+      const lobby = nodes.find((n) => n.program_type === "lobby" || n.program_type === "elevator_lobby");
       if (lobby) {
         addEdge({
           source: node.id,
           target: lobby.id,
           type: "PROGRAM_DEPENDENCY",
           weight: 0.8,
-          rationale: "Hotel rooms depend on lobby access",
+          rationale: "Brand experience spaces depend on lobby access",
+        });
+      }
+    }
+    // Executive suite depends on lounge
+    if (node.program_type === "executive_suite") {
+      const lounge = nodes.find((n) => n.program_type === "lounge");
+      if (lounge) {
+        addEdge({
+          source: node.id,
+          target: lounge.id,
+          type: "PROGRAM_DEPENDENCY",
+          weight: 0.7,
+          rationale: "Executive suite connected to lounge",
         });
       }
     }
@@ -449,5 +489,43 @@ function extractTotalFloors(forumResult: ForumResult): number {
       }
     }
   }
-  return maxFloor || 60;
+  return maxFloor || 8;
+}
+
+// ============================================================
+// Full Pipeline: ForumResult → VerticalNodeGraph
+// ============================================================
+
+import { buildVerticalNodeGraph } from "./builder";
+
+function extractGlobalGraph(forumResult: ForumResult): GlobalGraph {
+  const project = forumResult.project;
+  const totalFloors = extractTotalFloors(forumResult);
+
+  let basementFloors = 1;
+  for (const c of project.constraints) {
+    const match = c.match(/지하\s*(\d+)/);
+    if (match) basementFloors = parseInt(match[1]);
+  }
+
+  return {
+    site: project.site,
+    program: project.program,
+    constraints: project.constraints,
+    total_floors: totalFloors,
+    basement_floors: basementFloors,
+  };
+}
+
+export function buildGraphFromForumResult(
+  forumResult: ForumResult,
+): VerticalNodeGraph {
+  const global = extractGlobalGraph(forumResult);
+  const program = buildProgramGraph(forumResult);
+
+  const convergenceRound = forumResult.rounds.find((r) => r.phase === "convergence");
+  const responses = convergenceRound?.responses ?? forumResult.rounds[forumResult.rounds.length - 1].responses;
+  const consensus = mergeVerticalZones(responses, global.total_floors);
+
+  return buildVerticalNodeGraph(global, program, consensus);
 }

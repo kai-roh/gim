@@ -9,10 +9,10 @@ const METRIC_LABELS: Record<string, string> = {
   connectivity_accuracy: "Connectivity",
   vertical_continuity: "Continuity",
   zone_coverage: "Coverage",
-  structural_stability: "Structure",
-  environmental: "Environment",
+  structural_feasibility: "Structure",
   code_compliance: "Compliance",
-  economic: "Economic",
+  brand_identity: "Brand",
+  spatial_quality: "Spatial",
 };
 
 const METRIC_KEYS = Object.keys(METRIC_LABELS);

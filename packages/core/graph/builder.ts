@@ -1,6 +1,7 @@
 // ============================================================
 // Program Graph → Vertical Node Graph Builder
 // Core transformation: ProgramGraph + GlobalGraph → FloorNodes + VoxelEdges
+// Optimized for Corporate HQ (5~20 floors)
 // ============================================================
 
 import type {
@@ -19,9 +20,6 @@ import {
   classifyFloorZone,
   computeAbstractProperties,
   getDefaultRules,
-  getRefugeFloors,
-  getMechanicalFloors,
-  getOutriggerFloors,
 } from "./rules";
 
 // ============================================================
@@ -109,20 +107,17 @@ function buildFloorFunctionMap(
 function getDefaultFunctionForZone(zone: FloorZone): NodeFunction {
   switch (zone) {
     case "basement": return "parking";
-    case "podium": return "retail";
-    case "low_rise": return "premium_office";
-    case "mid_rise": return "open_office";
-    case "sky_lobby": return "elevator_lobby";
-    case "high_rise": return "hotel_room";
-    case "mechanical": return "mechanical_room";
-    case "crown": return "sky_lounge";
-    case "rooftop": return "observation_deck";
+    case "ground": return "lobby";
+    case "lower": return "brand_showroom";
+    case "middle": return "open_office";
+    case "upper": return "premium_office";
+    case "penthouse": return "executive_suite";
+    case "rooftop": return "sky_garden";
   }
 }
 
 // ============================================================
-// Horizontal Node Templates
-// Defines what spatial nodes each floor type should have
+// Horizontal Node Templates (Corporate HQ)
 // ============================================================
 
 interface HorizontalNodeSpec {
@@ -131,7 +126,6 @@ interface HorizontalNodeSpec {
   tags: string[];
 }
 
-// Each zone/primary function combination expands into a full floor plan
 function getFloorTemplate(zone: FloorZone, primaryFunc: NodeFunction): HorizontalNodeSpec[] {
   // Core nodes present on every floor
   const coreSpine: HorizontalNodeSpec[] = [
@@ -153,124 +147,79 @@ function getFloorTemplate(zone: FloorZone, primaryFunc: NodeFunction): Horizonta
         { function: "electrical_room", position: "northeast", tags: ["MEP", "power"] },
       ];
 
-    case "podium":
-      if (primaryFunc === "retail" || primaryFunc === "cultural_facility") {
+    case "ground":
+      return [
+        ...coreSpine,
+        { function: "lobby",               position: "south",     tags: ["entrance", "brand_experience"] },
+        { function: "brand_showroom",      position: "west",      tags: ["brand", "experience"] },
+        { function: "experiential_retail", position: "southwest", tags: ["retail", "experience"] },
+        { function: "public_void",         position: "center",    tags: ["atrium", "public_space"] },
+        { function: "cafe",                position: "northwest", tags: ["F&B", "casual"] },
+      ];
+
+    case "lower":
+      if (primaryFunc === "brand_showroom" || primaryFunc === "experiential_retail" || primaryFunc === "exhibition_hall") {
         return [
           ...coreSpine,
-          { function: "retail",            position: "south",     tags: ["commercial", "street_facing"] },
-          { function: "retail",            position: "west",      tags: ["commercial", "park_facing"] },
-          { function: "cultural_facility", position: "southwest", tags: ["public", "exhibition"] },
-          { function: "public_void",       position: "center",    tags: ["atrium", "public_space"] },
-          { function: "restaurant",        position: "northwest", tags: ["F&B", "amenity"] },
+          { function: "brand_showroom",      position: "south",     tags: ["brand", "experience"] },
+          { function: "experiential_retail", position: "west",      tags: ["retail", "interactive"] },
+          { function: "gallery",             position: "southwest", tags: ["exhibition", "art"] },
+          { function: "installation_space",  position: "northwest", tags: ["art", "immersive"] },
         ];
       }
       return [
         ...coreSpine,
         { function: primaryFunc,     position: "south",     tags: ["primary"] },
-        { function: "public_void",   position: "center",    tags: ["atrium"] },
-        { function: "retail",        position: "west",      tags: ["commercial"] },
+        { function: "gallery",       position: "west",      tags: ["exhibition"] },
+        { function: "retail",        position: "southwest", tags: ["commercial"] },
       ];
 
-    case "low_rise":
+    case "middle":
+      if (primaryFunc === "cafeteria" || primaryFunc === "fitness") {
+        return [
+          ...coreSpine,
+          { function: "cafeteria",     position: "south",     tags: ["F&B", "social"] },
+          { function: "fitness",       position: "west",      tags: ["wellness"] },
+          { function: "community_space", position: "northwest", tags: ["social", "flexible"] },
+          { function: "meeting_room",  position: "northeast", tags: ["meeting", "shared"] },
+        ];
+      }
       return [
         ...coreSpine,
-        { function: "premium_office", position: "south",     tags: ["primary", "river_view"] },
-        { function: "premium_office", position: "west",      tags: ["primary", "park_view"] },
-        { function: "conference",     position: "north",     tags: ["meeting", "shared"] },
-        { function: "executive_suite",position: "southeast", tags: ["premium", "corner_unit"] },
-      ];
-
-    case "mid_rise":
-      return [
-        ...coreSpine,
-        { function: "open_office",    position: "south",     tags: ["primary", "river_view"] },
-        { function: "open_office",    position: "west",      tags: ["primary", "park_view"] },
-        { function: "open_office",    position: "north",     tags: ["primary", "road_facing"] },
-        { function: "conference",     position: "northeast", tags: ["meeting", "shared"] },
+        { function: "open_office",    position: "south",     tags: ["primary", "views"] },
+        { function: "open_office",    position: "west",      tags: ["primary"] },
+        { function: "open_office",    position: "north",     tags: ["primary"] },
+        { function: "meeting_room",   position: "northeast", tags: ["meeting", "shared"] },
         { function: "coworking",      position: "northwest", tags: ["flexible", "shared"] },
       ];
 
-    case "sky_lobby":
+    case "upper":
       return [
         ...coreSpine,
-        { function: "sky_lounge",     position: "south",     tags: ["public", "vista", "river_view"] },
-        { function: "restaurant",     position: "southwest", tags: ["F&B", "destination"] },
-        { function: "sky_garden",     position: "west",      tags: ["landscape", "park_view"] },
-        { function: "gallery",        position: "north",     tags: ["cultural", "exhibition"] },
-        { function: "refuge_area",    position: "northeast", tags: ["safety", "refuge"] },
-      ];
-
-    case "high_rise":
-      if (primaryFunc === "hotel_room" || primaryFunc === "hotel_suite") {
-        return [
-          ...coreSpine,
-          { function: "hotel_room",   position: "south",     tags: ["guest", "river_view"] },
-          { function: "hotel_room",   position: "west",      tags: ["guest", "park_view"] },
-          { function: "hotel_room",   position: "north",     tags: ["guest", "city_view"] },
-          { function: "hotel_suite",  position: "southeast", tags: ["premium", "corner_suite"] },
-          { function: "hotel_amenity",position: "northwest", tags: ["service", "housekeeping"] },
-          { function: "hotel_lobby",  position: "center",    tags: ["circulation", "reception"] },
-        ];
-      }
-      // Office high-rise
-      return [
-        ...coreSpine,
-        { function: "open_office",    position: "south",     tags: ["primary", "river_view"] },
-        { function: "open_office",    position: "west",      tags: ["primary", "park_view"] },
+        { function: "premium_office", position: "south",     tags: ["primary", "views"] },
+        { function: "premium_office", position: "west",      tags: ["primary"] },
         { function: "conference",     position: "north",     tags: ["meeting"] },
+        { function: "focus_room",     position: "northeast", tags: ["focus", "quiet"] },
       ];
 
-    case "mechanical":
+    case "penthouse":
       return [
         ...coreSpine,
-        { function: "mechanical_room", position: "south",     tags: ["HVAC", "plant"] },
-        { function: "mechanical_room", position: "north",     tags: ["HVAC", "plant"] },
-        { function: "electrical_room", position: "west",      tags: ["power", "switchgear"] },
-        { function: "water_tank",      position: "northwest", tags: ["water", "fire_suppression"] },
-      ];
-
-    case "crown":
-      return [
-        ...coreSpine,
-        { function: "sky_lounge",       position: "south",     tags: ["destination", "river_panorama"] },
-        { function: "observation_deck", position: "west",      tags: ["public", "park_panorama"] },
-        { function: "rooftop_bar",      position: "southwest", tags: ["F&B", "premium"] },
-        { function: "restaurant",       position: "southeast", tags: ["fine_dining", "destination"] },
-        { function: "gallery",          position: "north",     tags: ["cultural", "exhibition"] },
+        { function: "executive_suite", position: "south",     tags: ["premium", "corner_suite"] },
+        { function: "lounge",          position: "southwest", tags: ["social", "premium"] },
+        { function: "meeting_room",    position: "north",     tags: ["meeting", "executive"] },
+        { function: "meditation_room", position: "northwest", tags: ["wellness", "quiet"] },
       ];
 
     case "rooftop":
       return [
         ...coreSpine,
-        { function: "observation_deck", position: "south",     tags: ["public", "panorama"] },
-        { function: "sky_garden",       position: "west",      tags: ["landscape", "green"] },
-        { function: "rooftop_bar",      position: "southeast", tags: ["F&B"] },
+        { function: "sky_garden",     position: "south",     tags: ["landscape", "green"] },
+        { function: "event_space",    position: "west",      tags: ["event", "flexible"] },
+        { function: "rooftop_bar",    position: "southeast", tags: ["F&B", "premium"] },
+        { function: "lounge",         position: "northwest", tags: ["social", "relaxation"] },
       ];
   }
-}
-
-// Special overlay nodes for certain floor conditions
-function getSpecialOverlay(
-  floor: number,
-  isRefuge: boolean,
-  isMechanical: boolean,
-  isOutrigger: boolean,
-): HorizontalNodeSpec[] {
-  const extras: HorizontalNodeSpec[] = [];
-
-  if (isRefuge) {
-    extras.push({ function: "refuge_area", position: "northeast", tags: ["safety", "fire_code", "evacuation"] });
-  }
-  if (isMechanical) {
-    extras.push({ function: "mechanical_room", position: "southeast", tags: ["MEP", "plant"] });
-    extras.push({ function: "electrical_room", position: "east",      tags: ["MEP", "power"] });
-  }
-  if (isOutrigger) {
-    extras.push({ function: "outrigger",  position: "north",     tags: ["structural", "lateral_system"] });
-    extras.push({ function: "belt_truss", position: "south",     tags: ["structural", "belt"] });
-  }
-
-  return extras;
 }
 
 // ============================================================
@@ -281,36 +230,20 @@ function createFloorNodes(
   floorMap: Map<number, FloorAssignment>,
   totalFloors: number,
   _basementFloors: number,
-  rules: DesignRules
+  _rules: DesignRules
 ): FloorNode[] {
   const nodes: FloorNode[] = [];
 
-  const refugeFloors = new Set(getRefugeFloors(totalFloors, rules.structural.refuge_interval));
-  const mechFloors = new Set(getMechanicalFloors(totalFloors, rules.structural.mechanical_interval[0]));
-  const outriggerFloors = new Set(getOutriggerFloors(totalFloors, rules.structural.outrigger_interval[0]));
-
   const allFloors = Array.from(floorMap.keys()).sort((a, b) => a - b);
-
-  // Track used IDs to avoid duplicates when two stairwells or two offices exist
   const usedIds = new Set<string>();
 
   for (const floor of allFloors) {
     const assignment = floorMap.get(floor)!;
-    const isRefuge = refugeFloors.has(floor);
-    const isMech = mechFloors.has(floor);
-    const isOutrigger = outriggerFloors.has(floor);
 
-    // Get the full floor template based on zone
     const template = getFloorTemplate(assignment.zone, assignment.primaryFunction);
-
-    // Add special overlay nodes
-    const specials = getSpecialOverlay(floor, isRefuge, isMech, isOutrigger);
-
-    // Merge: template + specials, dedup by function+position
-    const allSpecs = [...template, ...specials];
     const seen = new Set<string>();
 
-    for (const spec of allSpecs) {
+    for (const spec of template) {
       const dedupKey = `${spec.function}_${spec.position}`;
       if (seen.has(dedupKey)) continue;
       seen.add(dedupKey);
@@ -335,11 +268,9 @@ function createNode(
   const floorLabel = floor < 0 ? `B${Math.abs(floor)}` : `F${floor}`;
   let id = `${floorLabel}_${func}`;
 
-  // If ID already used (e.g. two stairwells), append position suffix
   if (usedIds.has(id)) {
     id = `${floorLabel}_${func}_${position}`;
   }
-  // If still duplicated, append counter
   if (usedIds.has(id)) {
     let c = 2;
     while (usedIds.has(`${id}_${c}`)) c++;
@@ -370,7 +301,7 @@ function createNode(
 function createEdges(
   nodes: FloorNode[],
   totalFloors: number,
-  rules: DesignRules,
+  _rules: DesignRules,
   global: GlobalGraph
 ): VoxelEdge[] {
   const edges: VoxelEdge[] = [];
@@ -412,27 +343,23 @@ function createEdges(
     }
   }
 
-  // 3. VERTICAL_CONNECT: sky_lobby zones only (not every floor with elevator_lobby)
-  const skyLobbyFloors = floors.filter((f) => {
-    return nodesByFloor.get(f)!.some((n) => n.floor_zone === "sky_lobby");
-  });
-  // Connect ground floor (0 or 1) to each sky lobby, and sky lobbies to each other
+  // 3. VERTICAL_CONNECT: ground floor to all other floors via elevator core
   const groundFloor = floors.find((f) => f === 1) ?? floors.find((f) => f === 0) ?? floors[0];
-  const connectFloors = [groundFloor, ...skyLobbyFloors.filter((f) => f !== groundFloor)];
-  for (let i = 0; i < connectFloors.length; i++) {
-    for (let j = i + 1; j < connectFloors.length; j++) {
-      const fromCore = nodesByFloor.get(connectFloors[i])!.find((n) => n.function === "elevator_core");
-      const toCore = nodesByFloor.get(connectFloors[j])!.find((n) => n.function === "elevator_core");
-      if (fromCore && toCore) {
+  const groundCore = nodesByFloor.get(groundFloor)?.find((n) => n.function === "elevator_core");
+  if (groundCore) {
+    for (const f of floors) {
+      if (f === groundFloor) continue;
+      const floorCore = nodesByFloor.get(f)?.find((n) => n.function === "elevator_core");
+      if (floorCore) {
         edges.push({
-          source: fromCore.id, target: toCore.id, type: "VERTICAL_CONNECT",
-          properties: { connection: "express_elevator" },
+          source: groundCore.id, target: floorCore.id, type: "VERTICAL_CONNECT",
+          properties: { connection: "elevator" },
         });
       }
     }
   }
 
-  // 4. SERVED_BY: mechanical floors serve ±15 floors
+  // 4. SERVED_BY: mechanical rooms serve nearby floors
   const mechFloors = floors.filter((f) =>
     nodesByFloor.get(f)!.some((n) => n.function === "mechanical_room")
   );
@@ -441,8 +368,7 @@ function createEdges(
     if (!mechNode) continue;
     for (const f of floors) {
       if (f === mechFloor) continue;
-      if (Math.abs(f - mechFloor) <= 15) {
-        // Serve the service_shaft on each floor (the mechanical duct)
+      if (Math.abs(f - mechFloor) <= 10) {
         const shaftNode = nodesByFloor.get(f)!.find((n) => n.function === "service_shaft");
         if (shaftNode) {
           edges.push({
@@ -471,7 +397,7 @@ function createEdges(
     }
   }
 
-  // 6. FACES: directional edges — connect south-positioned nodes to south context, etc.
+  // 6. FACES: directional edges
   const directionMap: Record<string, { context: string; positions: FloorPosition[] }> = {
     south: { context: global.site.context.south, positions: ["south", "southeast", "southwest"] },
     north: { context: global.site.context.north, positions: ["north", "northeast", "northwest"] },
@@ -479,8 +405,8 @@ function createEdges(
     west:  { context: global.site.context.west,  positions: ["west", "northwest", "southwest"] },
   };
 
-  // Every 5th floor (more granular than before)
-  const representativeFloors = floors.filter((f) => f <= 1 || f === totalFloors || f % 5 === 0);
+  // For corporate HQ, every 2nd floor is sufficient
+  const representativeFloors = floors.filter((f) => f <= 1 || f === totalFloors || f % 2 === 0);
   for (const f of representativeFloors) {
     const floorNodes = nodesByFloor.get(f)!;
     for (const [dir, info] of Object.entries(directionMap)) {
@@ -494,18 +420,20 @@ function createEdges(
     }
   }
 
-  // 7. STRUCTURAL_TRANSFER: outrigger/belt_truss → core
-  for (const f of floors) {
-    const floorNodes = nodesByFloor.get(f)!;
-    const structuralNodes = floorNodes.filter((n) => n.function === "outrigger" || n.function === "belt_truss");
-    const coreNode = floorNodes.find((n) => n.function === "elevator_core");
-    if (coreNode) {
-      for (const sn of structuralNodes) {
-        edges.push({
-          source: sn.id, target: coreNode.id, type: "STRUCTURAL_TRANSFER",
-          properties: { type: sn.function + "_to_core" },
-        });
-      }
+  // 7. STYLE_BOUNDARY: where architect style changes between floors
+  for (let i = 1; i < floors.length; i++) {
+    const lowerNodes = nodesByFloor.get(floors[i - 1])!;
+    const upperNodes = nodesByFloor.get(floors[i])!;
+    const lowerStyle = lowerNodes[0]?.style_ref;
+    const upperStyle = upperNodes[0]?.style_ref;
+
+    if (lowerStyle && upperStyle && lowerStyle !== upperStyle) {
+      const lowerLobby = lowerNodes.find((n) => n.function === "elevator_lobby") ?? lowerNodes[0];
+      const upperLobby = upperNodes.find((n) => n.function === "elevator_lobby") ?? upperNodes[0];
+      edges.push({
+        source: lowerLobby.id, target: upperLobby.id, type: "STYLE_BOUNDARY",
+        properties: { from_style: lowerStyle, to_style: upperStyle },
+      });
     }
   }
 

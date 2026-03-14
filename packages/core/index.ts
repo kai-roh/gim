@@ -24,7 +24,9 @@ export {
 
 export type {
   ArchitectProfile,
+  ExpertProfile,
   ArchitectResponse,
+  ExpertReviewResponse,
   DiscussionPhase,
   DesignProposal,
   VerticalZoneProposal,
@@ -63,6 +65,7 @@ export { buildVerticalNodeGraph } from "./graph/builder";
 // Graph — Program Graph
 export {
   buildProgramGraph,
+  buildGraphFromForumResult,
   mergeVerticalZones,
   normalizeFunctionName,
 } from "./graph/program-graph";

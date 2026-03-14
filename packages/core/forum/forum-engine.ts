@@ -33,9 +33,18 @@ export interface StreamCallbacks {
 // ============================================================
 
 export function buildContextPrompt(context: ProjectContext): string {
+  const companySection = context.company
+    ? `
+**기업 정보**:
+- 기업명: ${context.company.name}
+- 브랜드 철학: ${context.company.brand_philosophy}
+- 정체성 키워드: ${context.company.identity_keywords.join(", ")}
+`
+    : "";
+
   return `
 ## 프로젝트 컨텍스트
-
+${companySection}
 **위치**: ${context.site.location}
 **대지**: ${context.site.dimensions[0]}m × ${context.site.dimensions[1]}m
 **용적률**: ${context.site.far}%
@@ -126,7 +135,30 @@ ${othersText}
 이제 수렴 단계입니다. phase는 "convergence"입니다.
 - 다른 건축가들과의 공통점을 찾아 compromise를 작성하세요.
 - proposal을 합의 방향으로 조정하세요.
+- 층별 건축가 스타일 배분(style_ref)에 대한 합의안을 제시하세요.
 - 여전히 동의하지 않는 부분은 critique에 기록하세요.`;
+  }
+
+  if (phase === "expert_review") {
+    const othersText = otherResponses!
+      .map(
+        (o) => `
+### ${o.id}의 수렴된 제안:
+- 입장: ${o.response.stance}
+- 타협안: ${o.response.compromise || "없음"}
+- 구조: ${o.response.proposal.structural_system.system} (${o.response.proposal.structural_system.core_type})
+- 수직 조닝: ${o.response.proposal.vertical_zoning.map((z) => `${z.zone}(${z.floors[0]}~${z.floors[1]}F: ${z.primary_function})`).join(" → ")}
+`
+      )
+      .join("\n");
+
+    return `${contextPrompt}
+
+## 수렴된 건축가 제안
+
+${othersText}
+
+위 제안에 대한 전문가 검토를 진행합니다. 법규/구조적 관점에서 검토하세요.`;
   }
 
   return "";

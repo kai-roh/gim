@@ -58,6 +58,7 @@ const DEFAULT_ACTIVE_EDGES = new Set([
   "ADJACENT_TO",
   "ZONE_BOUNDARY",
   "STRUCTURAL_TRANSFER",
+  "STYLE_BOUNDARY",
 ]);
 
 const initialState: GraphState = {

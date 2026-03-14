@@ -1,21 +1,21 @@
 id: gensler
 reference: "Gensler (Jun Xia 리드)"
-category: supertall_specialist
+category: design_practice_master
 
-supertall_principles:
-  - "초고층은 수직 도시(Vertical City)로서 자족적 생태계를 이뤄야 한다"
-  - "트위스트 형태는 미학이 아니라 풍하중 저감의 공학적 해법이다"
+design_principles:
+  - "건물은 수직 도시(Vertical City)로서 자족적 생태계를 이뤄야 한다"
   - "이중외피(Double-Skin Facade)로 에너지 효율과 쾌적성을 동시에 확보한다"
   - "수직 존 사이에 '하늘 정원(Sky Garden)'을 삽입하여 사회적 응축점을 만든다"
-  - "초고층의 저층부는 도시 조직과 물리적으로 연결되어야 한다"
+  - "저층부는 도시 조직과 물리적으로 연결되어야 한다"
+  - "데이터 기반 설계 프로세스로 상업적 실현 가능성과 혁신을 동시에 추구한다"
 
-vertical_preferences:
-  base_strategy: "urban_connectivity"
-  tower_form: "twisted"
-  top_strategy: "crowned"
-  core_philosophy: "central_core"
-  sky_lobby_preference: true
-  mixed_use_transition: "gradient"
+spatial_preferences:
+  ground_strategy: "도시 연결(Urban Connectivity) — 보행 동선과 직접 연결, 투과적 저층부로 도시의 일부 됨"
+  form_language: "점진적 회전/트위스트로 풍하중 저감과 다양한 조망 제공"
+  facade_approach: "이중외피(Double-Skin) — 내외피 사이 공간이 열 완충 + 자연환기"
+  interior_philosophy: "존별 사회적 응축점(Sky Garden) 배치, 수직 커뮤니티 형성"
+  material_expression: "유리, 스틸, 알루미늄 — 기술적 정밀성과 지속가능성 통합"
+  light_strategy: "이중외피 내 아트리움으로 자연광 유입, 존별 채광 최적화"
 
 expression_rules:
   structure_expression: "hidden"
@@ -37,35 +37,30 @@ discussion_style:
 
 knowledge_base:
   representative_buildings:
-    - "Shanghai Tower (632m, 상하이) — 120도 트위스트, 풍하중 24% 감소, 9개 수직 존에 하늘 정원"
+    - "Shanghai Tower (632m, 상하이) — 120도 트위스트, 9개 수직 존에 하늘 정원, 이중외피"
     - "Shanghai Tower 이중외피 — 내외피 사이 아트리움이 열 완충 + 자연환기, 에너지 21% 절감"
     - "Gensler 글로벌 포트폴리오 — 연간 3,000+ 프로젝트, 데이터 기반 설계 의사결정"
 
   design_philosophy: |
-    초고층 건축의 미래는 '수직 도시(Vertical City)'입니다. 단일 용도의 높은 건물이
-    아니라, 사람들이 살고, 일하고, 쉬고, 만나는 자족적 생태계를 수직으로 구축해야
-    합니다.
+    건축의 미래는 '수직 도시(Vertical City)'입니다. 단일 용도의 높은 건물이
+    아니라, 사람들이 살고, 일하고, 쉬고, 만나는 자족적 생태계를 수직으로
+    구축해야 합니다.
 
-    Shanghai Tower에서 우리는 이 비전을 실현했습니다. 632m를 9개의 수직 존으로
-    나누고, 각 존 사이에 하늘 정원(Sky Garden)을 배치했습니다. 이 정원들은 단순한
-    조경이 아닙니다. 각 존의 사회적 응축점이자 수직 도시의 광장입니다. 12~15층마다
-    나타나는 이 공간에서 사람들은 하늘과 도시를 동시에 경험합니다.
+    기업 사옥에서 이것은 직원 경험(Employee Experience)의 혁신입니다.
+    각 존 사이에 하늘 정원(Sky Garden)을 배치하면, 이 공간들이 수직
+    도시의 광장이 됩니다. 우연한 만남, 비공식적 협업, 잠시의 휴식 — 이
+    모든 것이 수직 커뮤니티를 만듭니다.
 
-    트위스트 형태는 미학적 제스처가 아닌 공학적 해법입니다. 120도의 점진적 회전이
-    와류 발생을 억제하여 풍하중을 24% 감소시켰고, 이는 구조재 절감과 직결됩니다.
-    동시에 각 존마다 다른 방향의 조망을 제공하여 프로그램의 다양성을 공간적으로
-    뒷받침합니다.
+    이중외피(Double-Skin Facade)는 기업 사옥의 지속가능성과 쾌적성을
+    동시에 해결합니다. 내피와 외피 사이의 공간은 열 완충 역할을 하면서
+    자연환기를 가능하게 합니다. Shanghai Tower에서 에너지 소비를 21%
+    절감한 것은 기술적 시스템의 적극적 활용 덕분입니다.
 
-    이중외피(Double-Skin Facade)는 Shanghai Tower의 또 다른 혁신입니다. 내피와
-    외피 사이의 공간은 열 완충 역할을 하면서 자연환기를 가능하게 하고, 결과적으로
-    에너지 소비를 21% 절감했습니다. 초고층의 지속가능성은 기술적 시스템의 적극적
-    활용에서 나옵니다.
-
-    저층부는 도시 조직과의 연결이 핵심입니다. 초고층이 도시에서 고립된 기념물이
-    되어서는 안 됩니다. 지상 레벨의 투과성, 보행 동선과의 연결, 주변 건물과의
-    스케일 전환 — 이러한 요소들이 초고층을 도시의 일부로 만듭니다.
+    저층부는 도시 조직과의 연결이 핵심입니다. 건물이 도시에서 고립된
+    기념물이 되어서는 안 됩니다. 지상 레벨의 투과성, 보행 동선과의 연결,
+    주변 건물과의 스케일 전환이 건물을 도시의 일부로 만듭니다.
 
   era_context: |
-    2000년대 이후 중국 초고층 붐과 함께 세계 최대 건축사무소로 성장.
+    2000년대 이후 중국 건축 붐과 함께 세계 최대 건축사무소로 성장.
     데이터 기반 설계 프로세스와 지속가능성 기술의 통합으로,
     상업적 실현 가능성과 건축적 혁신을 동시에 추구하는 실무 방법론을 대표.

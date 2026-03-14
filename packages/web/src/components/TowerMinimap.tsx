@@ -83,10 +83,10 @@ export function TowerMinimap() {
                 const isCore = node.function === "elevator_core";
                 const isStairwell = node.function === "stairwell";
                 const isSpecial = [
-                  "outrigger",
-                  "refuge_area",
+                  "brand_showroom",
+                  "installation_space",
                   "mechanical_room",
-                  "belt_truss",
+                  "server_room",
                 ].includes(node.function);
 
                 return (

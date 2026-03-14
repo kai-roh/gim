@@ -1,6 +1,6 @@
 // ============================================================
-// Supertall Design Rule Engine
-// Encodes architectural rules from Tech Spec Chapter 6
+// Corporate HQ Design Rule Engine
+// Encodes architectural rules for mid-rise corporate buildings
 // ============================================================
 
 import type {
@@ -19,44 +19,52 @@ import type {
 export function getDefaultRules(): DesignRules {
   return {
     structural: {
-      outrigger_interval: [20, 30],   // floors between outriggers
-      mechanical_interval: [15, 25],  // floors between mechanical floors
-      refuge_interval: 25,            // max floors between refuge areas
+      max_cantilever_span: 8,        // meters, without reinforcement
+      max_span_without_column: 15,   // meters, column-free space
+      fire_stair_count: 2,           // 6층 이상 직통계단 2개소 이상
     },
     vertical_zoning: {
       floor_heights: {
         parking: 3.6,
-        retail: 5.0,
-        cultural_facility: 6.0,
-        public_void: 15.0,
-        open_office: 4.1,
-        premium_office: 4.2,
-        executive_suite: 4.5,
-        coworking: 4.0,
-        hotel_room: 3.4,
-        hotel_suite: 3.6,
-        hotel_lobby: 6.0,
-        hotel_amenity: 4.0,
-        sky_garden: 8.0,
-        sky_lounge: 5.0,
-        observation_deck: 5.0,
-        refuge_area: 4.0,
-        mechanical_room: 5.5,
-        electrical_room: 4.0,
-        water_tank: 4.5,
-        elevator_core: 4.1,
-        stairwell: 4.1,
-        elevator_lobby: 4.1,
-        service_shaft: 4.1,
-        conference: 4.0,
-        fitness: 4.5,
-        spa: 4.0,
-        library: 4.5,
+        loading_dock: 3.6,
+        bicycle_storage: 3.0,
+        retail: 4.5,
+        restaurant: 4.0,
+        cafe: 3.5,
+        flagship_store: 5.0,
+        brand_showroom: 5.0,
+        exhibition_hall: 5.5,
+        experiential_retail: 5.0,
+        installation_space: 6.0,
         gallery: 5.0,
-        rooftop_bar: 4.5,
-        loading_dock: 4.5,
-        outrigger: 5.5,
-        belt_truss: 5.5,
+        lobby: 6.0,
+        public_void: 10.0,
+        atrium: 8.0,
+        community_space: 4.0,
+        event_space: 5.0,
+        open_office: 3.5,
+        premium_office: 3.8,
+        executive_suite: 4.0,
+        coworking: 3.5,
+        focus_room: 3.0,
+        lounge: 3.5,
+        rooftop_bar: 4.0,
+        sky_garden: 5.0,
+        fitness: 4.0,
+        library: 4.0,
+        meditation_room: 3.5,
+        cafeteria: 3.8,
+        meeting_room: 3.0,
+        conference: 3.5,
+        auditorium: 5.0,
+        nursery: 3.0,
+        mechanical_room: 4.0,
+        electrical_room: 3.5,
+        server_room: 3.5,
+        elevator_core: 3.5,
+        stairwell: 3.5,
+        elevator_lobby: 3.5,
+        service_shaft: 3.5,
       },
     },
     core: {
@@ -72,110 +80,119 @@ export function getDefaultRules(): DesignRules {
 
 export function getFloorHeight(func: NodeFunction): number {
   const rules = getDefaultRules();
-  return rules.vertical_zoning.floor_heights[func] ?? 4.1;
+  return rules.vertical_zoning.floor_heights[func] ?? 3.5;
 }
 
 // ============================================================
-// Floor Zone Classification
+// Floor Zone Classification (Corporate HQ)
 // ============================================================
 
 export function classifyFloorZone(floor: number, totalFloors: number): FloorZone {
   if (floor < 0) return "basement";
-  if (floor === 0) return "podium";
+  if (floor <= 1) return "ground";
 
   const ratio = floor / totalFloors;
 
-  if (floor <= 5) return "podium";
-  if (ratio <= 0.23) return "low_rise";
-  if (ratio <= 0.55) return "mid_rise";
-  if (ratio <= 0.60) return "sky_lobby";
-  if (ratio <= 0.88) return "high_rise";
-  if (ratio <= 0.93) return "mechanical";
-  return "crown";
+  if (ratio <= 0.25) return "lower";
+  if (ratio <= 0.6) return "middle";
+  if (ratio <= 0.85) return "upper";
+  if (ratio <= 0.95) return "penthouse";
+  return "rooftop";
 }
 
 // ============================================================
-// Abstract Properties Computation
+// Abstract Properties Computation (Corporate HQ)
 // ============================================================
 
 export function computeAbstractProperties(
   node: Pick<FloorNode, "floor_level" | "floor_zone" | "function">,
   totalFloors: number
 ): AbstractProperties {
-  const heightRatio = Math.max(0, node.floor_level) / totalFloors;
+  const heightRatio = Math.max(0, node.floor_level) / Math.max(totalFloors, 1);
   const func = node.function;
   const zone = node.floor_zone;
 
-  // view_premium: proportional to height, south-facing bonus
-  const view_premium = Math.min(1, heightRatio * 1.1 + (zone === "crown" ? 0.1 : 0));
+  // view_premium: proportional to height
+  const view_premium = Math.min(1, heightRatio * 1.1 + (zone === "rooftop" ? 0.1 : 0));
 
-  // publicity: high for podium/lobby/public spaces, low for hotel/office
+  // publicity: high for ground/lobby/public spaces, low for executive/office
   const publicFunctions: NodeFunction[] = [
-    "public_void", "sky_garden", "observation_deck", "sky_lounge",
-    "refuge_area", "retail", "cultural_facility", "gallery",
+    "lobby", "public_void", "atrium", "community_space", "event_space",
+    "retail", "restaurant", "cafe", "gallery", "brand_showroom",
+    "experiential_retail", "flagship_store",
   ];
   const publicity = publicFunctions.includes(func)
-    ? 0.8 + (zone === "podium" ? 0.2 : 0)
-    : zone === "podium"
+    ? 0.8 + (zone === "ground" ? 0.2 : 0)
+    : zone === "ground"
       ? 0.6
-      : func === "elevator_lobby" || func === "hotel_lobby"
+      : func === "elevator_lobby"
+        ? 0.4
+        : 0.2;
+
+  // brand_expression: high for experience/retail/showroom spaces
+  const brandFunctions: NodeFunction[] = [
+    "brand_showroom", "experiential_retail", "installation_space",
+    "exhibition_hall", "flagship_store", "gallery", "lobby",
+  ];
+  const brand_expression = brandFunctions.includes(func)
+    ? 0.9
+    : func === "event_space" || func === "public_void" || func === "atrium"
+      ? 0.7
+      : func === "lounge" || func === "rooftop_bar"
         ? 0.5
         : 0.2;
 
-  // structural_load: higher at lower floors, spike at outrigger
-  const baseLoad = Math.max(0.1, 1 - heightRatio * 0.8);
-  const structural_load =
-    func === "outrigger" || func === "belt_truss"
-      ? Math.min(1, baseLoad + 0.3)
-      : baseLoad;
-
-  // vertical_flow: high for core/lobby
-  const coreFunctions: NodeFunction[] = [
-    "elevator_core", "stairwell", "elevator_lobby", "service_shaft",
+  // spatial_quality: based on function type and floor height
+  const highQualityFunctions: NodeFunction[] = [
+    "executive_suite", "lounge", "sky_garden", "gallery",
+    "lobby", "public_void", "atrium", "brand_showroom",
+    "installation_space", "event_space", "rooftop_bar",
   ];
-  const vertical_flow = coreFunctions.includes(func)
-    ? 0.9
-    : func === "hotel_lobby" || func === "sky_lounge"
-      ? 0.7
-      : zone === "sky_lobby"
-        ? 0.8
+  const spatial_quality = highQualityFunctions.includes(func)
+    ? 0.85
+    : func === "open_office" || func === "premium_office"
+      ? 0.6 + heightRatio * 0.2
+      : func === "cafeteria" || func === "fitness"
+        ? 0.5
         : 0.3;
 
   // prestige: height * function weight
   const prestigeWeights: Partial<Record<NodeFunction, number>> = {
     executive_suite: 0.9,
-    hotel_suite: 0.85,
     premium_office: 0.7,
-    sky_lounge: 0.95,
-    observation_deck: 1.0,
+    lounge: 0.8,
     rooftop_bar: 0.9,
-    hotel_room: 0.6,
+    sky_garden: 0.85,
+    brand_showroom: 0.8,
+    flagship_store: 0.75,
+    lobby: 0.6,
     open_office: 0.4,
   };
   const funcWeight = prestigeWeights[func] ?? 0.3;
-  const prestige = Math.min(1, heightRatio * 0.5 + funcWeight * 0.5);
+  const prestige = Math.min(1, heightRatio * 0.4 + funcWeight * 0.6);
 
   // flexibility: open_office high, core low
   const flexibilityMap: Partial<Record<NodeFunction, number>> = {
     open_office: 0.9,
     coworking: 0.85,
     premium_office: 0.7,
-    conference: 0.6,
-    hotel_room: 0.3,
+    meeting_room: 0.6,
+    conference: 0.5,
+    event_space: 0.7,
+    community_space: 0.65,
     elevator_core: 0.05,
     stairwell: 0.05,
     service_shaft: 0.05,
-    outrigger: 0.0,
-    belt_truss: 0.0,
     mechanical_room: 0.1,
+    server_room: 0.1,
   };
   const flexibility = flexibilityMap[func] ?? 0.4;
 
   return {
     view_premium: round2(view_premium),
     publicity: round2(publicity),
-    structural_load: round2(structural_load),
-    vertical_flow: round2(vertical_flow),
+    brand_expression: round2(brand_expression),
+    spatial_quality: round2(spatial_quality),
     prestige: round2(prestige),
     flexibility: round2(flexibility),
   };
@@ -186,7 +203,7 @@ function round2(n: number): number {
 }
 
 // ============================================================
-// Default Adjacency Rules
+// Default Adjacency Rules (Corporate HQ)
 // ============================================================
 
 export function getDefaultAdjacencyRules(): AdjacencyRule[] {
@@ -194,50 +211,46 @@ export function getDefaultAdjacencyRules(): AdjacencyRule[] {
     // Positive adjacencies
     { source: "elevator_core", target: "elevator_lobby", type: "positive", weight: 1.0, reason: "Core must connect to lobby" },
     { source: "elevator_core", target: "open_office", type: "positive", weight: 0.8, reason: "Office needs core access" },
-    { source: "elevator_core", target: "hotel_room", type: "positive", weight: 0.8, reason: "Hotel rooms need core access" },
     { source: "elevator_core", target: "premium_office", type: "positive", weight: 0.8, reason: "Premium office needs core access" },
-    { source: "hotel_lobby", target: "hotel_room", type: "positive", weight: 0.9, reason: "Hotel lobby serves rooms" },
+    { source: "lobby", target: "retail", type: "positive", weight: 0.8, reason: "Retail benefits from lobby proximity" },
+    { source: "lobby", target: "brand_showroom", type: "positive", weight: 0.9, reason: "Brand showroom anchors the lobby experience" },
     { source: "retail", target: "public_void", type: "positive", weight: 0.7, reason: "Retail benefits from public space" },
-    { source: "retail", target: "cultural_facility", type: "positive", weight: 0.6, reason: "Cultural facility draws retail traffic" },
-    { source: "restaurant", target: "sky_lounge", type: "positive", weight: 0.7, reason: "Dining pairs with lounge" },
-    { source: "mechanical_room", target: "outrigger", type: "positive", weight: 0.9, reason: "Mechanical floors at outrigger levels" },
-    { source: "refuge_area", target: "stairwell", type: "positive", weight: 1.0, reason: "Refuge must be near stairs" },
-    { source: "observation_deck", target: "sky_lounge", type: "positive", weight: 0.8, reason: "Observation pairs with lounge" },
+    { source: "retail", target: "experiential_retail", type: "positive", weight: 0.7, reason: "Retail and experience spaces complement" },
+    { source: "brand_showroom", target: "gallery", type: "positive", weight: 0.7, reason: "Showroom and gallery create brand experience" },
+    { source: "restaurant", target: "lounge", type: "positive", weight: 0.6, reason: "Dining pairs with lounge" },
+    { source: "cafeteria", target: "open_office", type: "positive", weight: 0.7, reason: "Cafeteria serves office workers" },
+    { source: "meeting_room", target: "open_office", type: "positive", weight: 0.8, reason: "Meeting rooms near offices" },
+    { source: "stairwell", target: "elevator_core", type: "positive", weight: 0.9, reason: "Egress near core" },
 
     // Negative adjacencies
-    { source: "parking", target: "hotel_room", type: "negative", weight: 0.9, reason: "Parking noise/fumes incompatible with hotel" },
-    { source: "parking", target: "hotel_suite", type: "negative", weight: 1.0, reason: "Parking incompatible with premium hotel" },
-    { source: "mechanical_room", target: "hotel_room", type: "negative", weight: 0.7, reason: "Mechanical noise disturbs hotel" },
-    { source: "mechanical_room", target: "hotel_suite", type: "negative", weight: 0.8, reason: "Mechanical noise disturbs suite" },
-    { source: "loading_dock", target: "hotel_lobby", type: "negative", weight: 0.8, reason: "Service areas separated from hotel entry" },
-    { source: "loading_dock", target: "sky_lounge", type: "negative", weight: 0.9, reason: "Service areas away from premium spaces" },
+    { source: "parking", target: "executive_suite", type: "negative", weight: 0.9, reason: "Parking noise/fumes incompatible with executive" },
+    { source: "parking", target: "brand_showroom", type: "negative", weight: 1.0, reason: "Parking incompatible with brand experience" },
+    { source: "mechanical_room", target: "meditation_room", type: "negative", weight: 0.8, reason: "Mechanical noise disturbs meditation" },
+    { source: "mechanical_room", target: "executive_suite", type: "negative", weight: 0.7, reason: "Mechanical noise disturbs executives" },
+    { source: "loading_dock", target: "lobby", type: "negative", weight: 0.8, reason: "Service areas separated from main entry" },
+    { source: "loading_dock", target: "brand_showroom", type: "negative", weight: 0.9, reason: "Service areas away from brand spaces" },
+    { source: "server_room", target: "gallery", type: "negative", weight: 0.6, reason: "Server heat/noise away from gallery" },
   ];
 }
 
 // ============================================================
-// Special Floor Detection
+// Special Floor Detection (Corporate HQ — simplified)
 // ============================================================
 
-export function getRefugeFloors(totalFloors: number, interval: number = 25): number[] {
-  const floors: number[] = [];
-  for (let f = interval; f < totalFloors; f += interval) {
-    floors.push(f);
-  }
-  return floors;
+export function getRefugeFloors(_totalFloors: number, _interval: number = 25): number[] {
+  // Corporate HQ (under 20 floors) typically doesn't require refuge floors
+  return [];
 }
 
-export function getMechanicalFloors(totalFloors: number, interval: number = 20): number[] {
-  const floors: number[] = [];
-  for (let f = interval; f < totalFloors; f += interval) {
-    floors.push(f);
+export function getMechanicalFloors(totalFloors: number, _interval: number = 20): number[] {
+  // For corporate HQ, mechanical is typically in basement or a single mid-floor
+  if (totalFloors > 10) {
+    return [Math.floor(totalFloors / 2)];
   }
-  return floors;
+  return [];
 }
 
-export function getOutriggerFloors(totalFloors: number, interval: number = 25): number[] {
-  const floors: number[] = [];
-  for (let f = interval; f < totalFloors; f += interval) {
-    floors.push(f);
-  }
-  return floors;
+export function getOutriggerFloors(_totalFloors: number, _interval: number = 25): number[] {
+  // Corporate HQ (mid-rise) doesn't need outriggers
+  return [];
 }

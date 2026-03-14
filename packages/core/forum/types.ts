@@ -1,21 +1,21 @@
 // ============================================================
-// Architect Clone Types
+// Architect Clone Types (Corporate HQ)
 // ============================================================
 
 export interface ArchitectProfile {
   id: string;
   reference: string;
-  category: "supertall_specialist" | "architectural_visionary";
+  category: "design_practice_master" | "architectural_visionary";
 
-  supertall_principles: string[];
+  design_principles: string[];
 
-  vertical_preferences: {
-    base_strategy: string;
-    tower_form: string;
-    top_strategy: string;
-    core_philosophy: string;
-    sky_lobby_preference: boolean;
-    mixed_use_transition: string;
+  spatial_preferences: {
+    ground_strategy: string;
+    form_language: string;
+    facade_approach: string;
+    interior_philosophy: string;
+    material_expression: string;
+    light_strategy: string;
   };
 
   expression_rules: {
@@ -39,6 +39,17 @@ export interface ArchitectProfile {
 }
 
 // ============================================================
+// Expert Profile Types
+// ============================================================
+
+export interface ExpertProfile {
+  id: string;
+  type: "legal_regulatory" | "structural_engineering";
+  focus_areas: string[];
+  review_criteria: string[];
+}
+
+// ============================================================
 // Discussion Protocol Types
 // ============================================================
 
@@ -46,12 +57,14 @@ export type DiscussionPhase =
   | "proposal"
   | "cross_critique"
   | "convergence"
+  | "expert_review"
   | "finalization";
 
 export interface VerticalZoneProposal {
   zone: string;
   floors: [number, number];
   primary_function: string;
+  style_ref?: string;
   rationale: string;
 }
 
@@ -82,11 +95,28 @@ export interface ArchitectResponse {
   compromise?: string;
 }
 
+export interface ExpertReviewResponse {
+  expert_id: string;
+  expert_type: "legal_regulatory" | "structural_engineering";
+  verdict: "approved" | "conditionally_approved" | "revision_required";
+  issues: {
+    severity: "info" | "warning" | "critical";
+    description: string;
+    recommendation: string;
+  }[];
+  summary: string;
+}
+
 // ============================================================
 // Forum Session Types
 // ============================================================
 
 export interface ProjectContext {
+  company?: {
+    name: string;
+    brand_philosophy: string;
+    identity_keywords: string[];
+  };
   site: {
     location: string;
     dimensions: [number, number];
@@ -124,8 +154,9 @@ export interface ForumSession {
 export interface ForumRound {
   round: number;
   phase: DiscussionPhase;
-  trigger: "initial_context" | "evaluation_feedback" | "user_intervention";
+  trigger: "initial_context" | "evaluation_feedback" | "user_intervention" | "expert_feedback";
   responses: ArchitectResponse[];
+  expert_reviews?: ExpertReviewResponse[];
   consensus?: string;
   dissent?: string[];
 }

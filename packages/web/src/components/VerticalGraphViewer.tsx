@@ -181,7 +181,7 @@ export function VerticalGraphViewer() {
             ? 3
             : d.node.function === "stairwell"
               ? 2
-              : ["outrigger", "refuge_area"].includes(d.node.function)
+              : ["brand_showroom", "installation_space", "atrium", "public_void"].includes(d.node.function)
                 ? 5
                 : 4;
         return d.node.id === selectedNodeId ? base + 2 : base;

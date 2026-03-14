@@ -1,7 +1,7 @@
 "use client";
 
-import React, { createContext, useContext, useReducer, useCallback } from "react";
-import type { ArchitectResponse, DiscussionPhase } from "@gim/core";
+import React, { createContext, useContext, useReducer, useCallback, useRef } from "react";
+import type { ArchitectResponse, DiscussionPhase, VerticalNodeGraph } from "@gim/core";
 
 // ============================================================
 // State
@@ -17,6 +17,15 @@ export interface ArchitectSummary {
   representative_buildings: string[];
 }
 
+export interface ForumMessage {
+  id: string;
+  type: "user" | "system" | "architect" | "phase" | "graph";
+  content: string;
+  architectId?: string;
+  phase?: DiscussionPhase;
+  timestamp: number;
+}
+
 export interface ForumState {
   sessionId: string | null;
   selectedArchitects: string[];
@@ -26,10 +35,13 @@ export interface ForumState {
     phase: DiscussionPhase;
     responses: { architectId: string; response: ArchitectResponse }[];
   }[];
+  messages: ForumMessage[];
   streamingArchitectId: string | null;
   streamingTokens: string;
   status: "idle" | "selecting" | "streaming" | "phase_complete" | "all_complete";
   error: string | null;
+  brief: string | null;
+  autoRunning: boolean;
 }
 
 const initialState: ForumState = {
@@ -38,10 +50,13 @@ const initialState: ForumState = {
   architects: [],
   currentPhase: null,
   phases: [],
+  messages: [],
   streamingArchitectId: null,
   streamingTokens: "",
   status: "selecting",
   error: null,
+  brief: null,
+  autoRunning: false,
 };
 
 // ============================================================
@@ -51,6 +66,8 @@ const initialState: ForumState = {
 export type ForumAction =
   | { type: "SET_ARCHITECTS"; architects: ArchitectSummary[] }
   | { type: "TOGGLE_ARCHITECT"; id: string }
+  | { type: "SET_BRIEF"; brief: string }
+  | { type: "ADD_MESSAGE"; message: ForumMessage }
   | { type: "SESSION_CREATED"; sessionId: string }
   | { type: "PHASE_STARTED"; phase: DiscussionPhase }
   | { type: "ARCHITECT_STARTED"; architectId: string }
@@ -58,6 +75,7 @@ export type ForumAction =
   | { type: "ARCHITECT_COMPLETE"; architectId: string; response: ArchitectResponse }
   | { type: "PHASE_COMPLETE"; phase: DiscussionPhase }
   | { type: "ALL_COMPLETE" }
+  | { type: "SET_AUTO_RUNNING"; running: boolean }
   | { type: "ERROR"; error: string }
   | { type: "RESET" };
 
@@ -76,6 +94,12 @@ function forumReducer(state: ForumState, action: ForumAction): ForumState {
         : [...state.selectedArchitects, action.id].slice(0, 5);
       return { ...state, selectedArchitects: selected };
     }
+
+    case "SET_BRIEF":
+      return { ...state, brief: action.brief };
+
+    case "ADD_MESSAGE":
+      return { ...state, messages: [...state.messages, action.message] };
 
     case "SESSION_CREATED":
       return { ...state, sessionId: action.sessionId, status: "idle" };
@@ -131,10 +155,13 @@ function forumReducer(state: ForumState, action: ForumAction): ForumState {
       return { ...state, status: "phase_complete" };
 
     case "ALL_COMPLETE":
-      return { ...state, status: "all_complete" };
+      return { ...state, status: "all_complete", autoRunning: false };
+
+    case "SET_AUTO_RUNNING":
+      return { ...state, autoRunning: action.running };
 
     case "ERROR":
-      return { ...state, error: action.error, status: "idle" };
+      return { ...state, error: action.error, status: "idle", autoRunning: false };
 
     case "RESET":
       return { ...initialState, architects: state.architects };
@@ -151,39 +178,81 @@ function forumReducer(state: ForumState, action: ForumAction): ForumState {
 interface ForumContextValue {
   state: ForumState;
   dispatch: React.Dispatch<ForumAction>;
-  startSession: () => Promise<void>;
+  startSession: (brief?: string) => Promise<void>;
   runPhase: (phase: DiscussionPhase) => Promise<void>;
+  runAllPhases: () => Promise<void>;
+  addMessage: (type: ForumMessage["type"], content: string, extra?: Partial<ForumMessage>) => void;
 }
 
 const ForumContext = createContext<ForumContextValue | null>(null);
 
-export function ForumProvider({ children }: { children: React.ReactNode }) {
-  const [state, dispatch] = useReducer(forumReducer, initialState);
+const PHASE_ORDER: DiscussionPhase[] = ["proposal", "cross_critique", "convergence"];
 
-  const startSession = useCallback(async () => {
+interface ForumProviderProps {
+  children: React.ReactNode;
+  onGraphGenerated?: (graph: VerticalNodeGraph) => void;
+}
+
+export function ForumProvider({ children, onGraphGenerated }: ForumProviderProps) {
+  const [state, dispatch] = useReducer(forumReducer, initialState);
+  const onGraphRef = useRef(onGraphGenerated);
+  onGraphRef.current = onGraphGenerated;
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  const addMessage = useCallback(
+    (type: ForumMessage["type"], content: string, extra?: Partial<ForumMessage>) => {
+      dispatch({
+        type: "ADD_MESSAGE",
+        message: {
+          id: `msg_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          type,
+          content,
+          timestamp: Date.now(),
+          ...extra,
+        },
+      });
+    },
+    []
+  );
+
+  const startSession = useCallback(async (brief?: string) => {
+    const s = stateRef.current;
     try {
       const resp = await fetch("/api/forum/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ panelIds: state.selectedArchitects }),
+        body: JSON.stringify({
+          panelIds: s.selectedArchitects,
+          brief: brief || s.brief || undefined,
+        }),
       });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.error);
       dispatch({ type: "SESSION_CREATED", sessionId: data.sessionId });
+      addMessage("system", `Session created. Panel: ${s.selectedArchitects.map((a) => a.replace(/_/g, " ")).join(", ")}`);
     } catch (e) {
       dispatch({ type: "ERROR", error: e instanceof Error ? e.message : "Failed to create session" });
     }
-  }, [state.selectedArchitects]);
+  }, [addMessage]);
 
   const runPhase = useCallback(
-    async (phase: DiscussionPhase) => {
-      if (!state.sessionId) return;
+    (phase: DiscussionPhase): Promise<void> => {
+      const s = stateRef.current;
+      if (!s.sessionId) return Promise.resolve();
 
       dispatch({ type: "PHASE_STARTED", phase });
 
-      try {
+      const PHASE_NAMES: Record<string, string> = {
+        proposal: "발제 (Proposal)",
+        cross_critique: "교차 비평 (Cross Critique)",
+        convergence: "수렴 (Convergence)",
+      };
+      addMessage("phase", `── ${PHASE_NAMES[phase] || phase} ──`, { phase });
+
+      return new Promise<void>((resolve) => {
         const eventSource = new EventSource(
-          `/api/forum/stream?sessionId=${state.sessionId}&phase=${phase}`
+          `/api/forum/stream?sessionId=${s.sessionId}&phase=${phase}`
         );
 
         eventSource.addEventListener("forum:architect_started", (e) => {
@@ -203,37 +272,70 @@ export function ForumProvider({ children }: { children: React.ReactNode }) {
             architectId: data.architectId,
             response: data.response,
           });
+          // Add architect response as a chat message
+          const r = data.response as ArchitectResponse;
+          const zoningText = r.proposal?.vertical_zoning
+            ?.slice(0, 5)
+            .map((z: any) => `  ${z.zone}: ${z.floors[0]}~${z.floors[1]}F — ${z.primary_function}`)
+            .join("\n") || "";
+          addMessage("architect", `${r.stance}\n\n${r.reasoning.slice(0, 300)}${r.reasoning.length > 300 ? "..." : ""}${zoningText ? "\n\n" + zoningText : ""}`, {
+            architectId: data.architectId,
+            phase,
+          });
         });
 
         eventSource.addEventListener("forum:phase_complete", () => {
           dispatch({ type: "PHASE_COMPLETE", phase });
-          eventSource.close();
+        });
+
+        eventSource.addEventListener("forum:graph_generated", (e) => {
+          const data = JSON.parse(e.data);
+          onGraphRef.current?.(data.graph);
+          const g = data.graph;
+          addMessage("graph", `Graph generated: ${g.nodes.length} nodes, ${g.edges.length} edges (F${g.metadata.floor_range[0]}~${g.metadata.floor_range[1]})`);
+        });
+
+        eventSource.addEventListener("forum:saved", (e) => {
+          const data = JSON.parse(e.data);
+          if (data.forumPath || data.graphPath) {
+            addMessage("system", `Saved: ${[data.forumPath, data.graphPath].filter(Boolean).join(", ")}`);
+          }
         });
 
         eventSource.addEventListener("forum:done", () => {
           dispatch({ type: "PHASE_COMPLETE", phase });
           eventSource.close();
+          resolve();
         });
 
         eventSource.addEventListener("forum:error", (e) => {
           const data = JSON.parse(e.data);
           dispatch({ type: "ERROR", error: data.error });
           eventSource.close();
+          resolve();
         });
 
         eventSource.onerror = () => {
           dispatch({ type: "PHASE_COMPLETE", phase });
           eventSource.close();
+          resolve();
         };
-      } catch (e) {
-        dispatch({ type: "ERROR", error: e instanceof Error ? e.message : "Streaming error" });
-      }
+      });
     },
-    [state.sessionId]
+    [addMessage]
   );
 
+  const runAllPhases = useCallback(async () => {
+    dispatch({ type: "SET_AUTO_RUNNING", running: true });
+    for (const phase of PHASE_ORDER) {
+      if (stateRef.current.error) break;
+      await runPhase(phase);
+    }
+    dispatch({ type: "ALL_COMPLETE" });
+  }, [runPhase]);
+
   return (
-    <ForumContext.Provider value={{ state, dispatch, startSession, runPhase }}>
+    <ForumContext.Provider value={{ state, dispatch, startSession, runPhase, runAllPhases, addMessage }}>
       {children}
     </ForumContext.Provider>
   );

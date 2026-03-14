@@ -1,9 +1,46 @@
 import { sessionStore } from "@/lib/session-store";
-import { runPhaseStreaming, buildPanel } from "@gim/core";
-import type { ArchitectResponse, DiscussionPhase } from "@gim/core";
+import {
+  runPhaseStreaming,
+  buildPanel,
+  sessionToForumResult,
+  buildGraphFromForumResult,
+} from "@gim/core";
+import type { DiscussionPhase } from "@gim/core";
 import * as path from "path";
+import * as fs from "fs";
 
 const DATA_DIR = path.resolve(process.cwd(), "../../data");
+const FORUM_OUTPUT_DIR = path.resolve(process.cwd(), "../../forum_results");
+const GRAPH_OUTPUT_DIR = path.resolve(process.cwd(), "../../graph_output");
+
+function kstTimestamp(): string {
+  const now = new Date();
+  const kst = new Date(now.getTime() + 9 * 60 * 60 * 1000);
+  return kst.toISOString().replace(/[:.]/g, "-").slice(0, 19);
+}
+
+function saveForumResult(session: any, timestamp: string) {
+  try {
+    if (!fs.existsSync(FORUM_OUTPUT_DIR)) fs.mkdirSync(FORUM_OUTPUT_DIR, { recursive: true });
+    const filePath = path.join(FORUM_OUTPUT_DIR, `${timestamp}.json`);
+    const forumResult = sessionToForumResult(session);
+    fs.writeFileSync(filePath, JSON.stringify(forumResult, null, 2), "utf-8");
+    return filePath;
+  } catch { return null; }
+}
+
+function saveGraphOutput(graph: any, timestamp: string) {
+  try {
+    if (!fs.existsSync(GRAPH_OUTPUT_DIR)) fs.mkdirSync(GRAPH_OUTPUT_DIR, { recursive: true });
+    // Save with unique timestamp filename
+    const filePath = path.join(GRAPH_OUTPUT_DIR, `graph_${timestamp}.json`);
+    const data = JSON.stringify(graph, null, 2);
+    fs.writeFileSync(filePath, data, "utf-8");
+    // Also update latest for backward compatibility
+    fs.writeFileSync(path.join(GRAPH_OUTPUT_DIR, "vertical_node_graph.json"), data, "utf-8");
+    return filePath;
+  } catch { return null; }
+}
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -55,13 +92,34 @@ export async function GET(request: Request) {
               entry.currentPhaseResponses.push({ id: architectId, response });
               send("forum:architect_complete", { architectId, response });
             },
-            onPhaseComplete: (phase, responses) => {
-              send("forum:phase_complete", { phase, responses });
+            onPhaseComplete: (phaseCompleted, responses) => {
+              send("forum:phase_complete", { phase: phaseCompleted, responses });
             },
           },
           previousResponses,
           { dataDir: DATA_DIR }
         );
+
+        // Generate graph from forum results
+        try {
+          const forumResult = sessionToForumResult(entry.session);
+          const graph = buildGraphFromForumResult(forumResult);
+          send("forum:graph_generated", { graph });
+
+          // Save to disk only on final phase (convergence)
+          if (phase === "convergence") {
+            const ts = kstTimestamp();
+            const forumPath = saveForumResult(entry.session, ts);
+            const graphPath = saveGraphOutput(graph, ts);
+            send("forum:saved", {
+              forumPath: forumPath ? path.basename(forumPath) : null,
+              graphPath: graphPath ? path.basename(graphPath) : null,
+            });
+          }
+        } catch (graphErr) {
+          const msg = graphErr instanceof Error ? graphErr.message : "Graph generation failed";
+          send("forum:graph_error", { error: msg });
+        }
 
         entry.status = "completed";
         send("forum:done", { phase, sessionId });

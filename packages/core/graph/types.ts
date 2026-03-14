@@ -11,22 +11,20 @@ import type {
 } from "../forum/types";
 
 // ============================================================
-// Floor Zone Classification (9 zones)
+// Floor Zone Classification (7 zones — Corporate HQ)
 // ============================================================
 
 export type FloorZone =
   | "basement"
-  | "podium"
-  | "low_rise"
-  | "mid_rise"
-  | "sky_lobby"
-  | "high_rise"
-  | "mechanical"
-  | "crown"
+  | "ground"
+  | "lower"
+  | "middle"
+  | "upper"
+  | "penthouse"
   | "rooftop";
 
 // ============================================================
-// Node Function Classification (30 types, 9 categories)
+// Node Function Classification (Corporate HQ — 9 categories)
 // ============================================================
 
 export type NodeFunction =
@@ -35,54 +33,61 @@ export type NodeFunction =
   | "stairwell"
   | "elevator_lobby"
   | "service_shaft"
-  // OFFICE (4)
+  // OFFICE (5)
   | "open_office"
   | "premium_office"
   | "executive_suite"
   | "coworking"
-  // HOTEL (4)
-  | "hotel_room"
-  | "hotel_suite"
-  | "hotel_lobby"
-  | "hotel_amenity"
-  // RETAIL (3)
+  | "focus_room"
+  // EXPERIENCE (5)
+  | "brand_showroom"
+  | "exhibition_hall"
+  | "experiential_retail"
+  | "gallery"
+  | "installation_space"
+  // RETAIL (4)
   | "retail"
   | "restaurant"
-  | "cultural_facility"
+  | "cafe"
+  | "flagship_store"
   // PUBLIC (5)
+  | "lobby"
   | "public_void"
-  | "sky_garden"
-  | "observation_deck"
-  | "sky_lounge"
-  | "refuge_area"
+  | "atrium"
+  | "community_space"
+  | "event_space"
   // SOCIAL (6)
-  | "conference"
-  | "fitness"
-  | "spa"
-  | "library"
-  | "gallery"
+  | "lounge"
   | "rooftop_bar"
+  | "sky_garden"
+  | "fitness"
+  | "library"
+  | "meditation_room"
+  // AMENITY (5)
+  | "cafeteria"
+  | "meeting_room"
+  | "conference"
+  | "auditorium"
+  | "nursery"
   // MECHANICAL (3)
   | "mechanical_room"
   | "electrical_room"
-  | "water_tank"
-  // PARKING (2)
+  | "server_room"
+  // PARKING (3)
   | "parking"
   | "loading_dock"
-  // STRUCTURAL (2)
-  | "outrigger"
-  | "belt_truss";
+  | "bicycle_storage";
 
 export const NODE_FUNCTION_CATEGORY: Record<string, NodeFunction[]> = {
   CORE: ["elevator_core", "stairwell", "elevator_lobby", "service_shaft"],
-  OFFICE: ["open_office", "premium_office", "executive_suite", "coworking"],
-  HOTEL: ["hotel_room", "hotel_suite", "hotel_lobby", "hotel_amenity"],
-  RETAIL: ["retail", "restaurant", "cultural_facility"],
-  PUBLIC: ["public_void", "sky_garden", "observation_deck", "sky_lounge", "refuge_area"],
-  SOCIAL: ["conference", "fitness", "spa", "library", "gallery", "rooftop_bar"],
-  MECHANICAL: ["mechanical_room", "electrical_room", "water_tank"],
-  PARKING: ["parking", "loading_dock"],
-  STRUCTURAL: ["outrigger", "belt_truss"],
+  OFFICE: ["open_office", "premium_office", "executive_suite", "coworking", "focus_room"],
+  EXPERIENCE: ["brand_showroom", "exhibition_hall", "experiential_retail", "gallery", "installation_space"],
+  RETAIL: ["retail", "restaurant", "cafe", "flagship_store"],
+  PUBLIC: ["lobby", "public_void", "atrium", "community_space", "event_space"],
+  SOCIAL: ["lounge", "rooftop_bar", "sky_garden", "fitness", "library", "meditation_room"],
+  AMENITY: ["cafeteria", "meeting_room", "conference", "auditorium", "nursery"],
+  MECHANICAL: ["mechanical_room", "electrical_room", "server_room"],
+  PARKING: ["parking", "loading_dock", "bicycle_storage"],
 };
 
 // ============================================================
@@ -152,12 +157,12 @@ export interface ProgramGraph {
 // ============================================================
 
 export interface AbstractProperties {
-  view_premium: number;      // 0-1, height-based view quality
-  publicity: number;         // 0-1, public accessibility
-  structural_load: number;   // 0-1, load on this floor
-  vertical_flow: number;     // 0-1, vertical circulation intensity
-  prestige: number;          // 0-1, perceived prestige
-  flexibility: number;       // 0-1, spatial flexibility
+  view_premium: number;        // 0-1, height-based view quality
+  publicity: number;           // 0-1, public accessibility
+  brand_expression: number;    // 0-1, brand identity expression intensity
+  spatial_quality: number;     // 0-1, spatial quality (ceiling height, natural light, views)
+  prestige: number;            // 0-1, perceived prestige
+  flexibility: number;         // 0-1, spatial flexibility
 }
 
 // Cardinal positions on floor plan
@@ -181,6 +186,7 @@ export interface FloorNode {
   position: FloorPosition;
   constraints: string[];
   abstract: AbstractProperties;
+  style_ref?: string;
   tags: string[];
   geometry_ref?: string;
 }
@@ -193,6 +199,7 @@ export type VoxelEdgeType =
   | "ZONE_BOUNDARY"
   | "FACES"
   | "STRUCTURAL_TRANSFER"
+  | "STYLE_BOUNDARY"
   | "PROGRAM_LINK";
 
 export interface VoxelEdge {
@@ -236,9 +243,9 @@ export interface ForumResult {
 
 export interface DesignRules {
   structural: {
-    outrigger_interval: [number, number];
-    mechanical_interval: [number, number];
-    refuge_interval: number;
+    max_cantilever_span: number;
+    max_span_without_column: number;
+    fire_stair_count: number;
   };
   vertical_zoning: {
     floor_heights: Record<string, number>;

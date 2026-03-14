@@ -3,11 +3,52 @@ import { createForumSession } from "@gim/core";
 import type { ProjectContext } from "@gim/core";
 import { sessionStore } from "@/lib/session-store";
 
+const DEFAULT_CONTEXT: ProjectContext = {
+  company: {
+    name: "Gentle Monster",
+    brand_philosophy: "하이엔드 아이웨어 브랜드. 실험적 공간 경험과 아트 인스톨레이션으로 리테일의 새로운 패러다임 제시",
+    identity_keywords: ["experimental", "art_installation", "futuristic", "immersive_experience", "avant_garde"],
+  },
+  site: {
+    location: "서울 성수동",
+    dimensions: [40, 35],
+    far: 600,
+    bcr: 60,
+    height_limit: 50,
+    context: {
+      north: "성수 카페거리, 보행 밀집 지역",
+      south: "주거지역, 중저층 건물",
+      east: "성수역 도보 5분",
+      west: "서울숲 (직선거리 300m)",
+    },
+  },
+  program: {
+    total_gfa: 8400,
+    uses: [
+      { type: "brand_experience", ratio: 0.25, requirements: "1~2F, 브랜드 쇼룸+체험형 리테일+갤러리" },
+      { type: "office", ratio: 0.35, requirements: "3~5F, 본사 업무공간" },
+      { type: "creative_lab", ratio: 0.15, requirements: "6F, R&D 및 크리에이티브 랩" },
+      { type: "executive_lounge", ratio: 0.10, requirements: "7F, 임원 라운지 및 미팅" },
+      { type: "rooftop", ratio: 0.05, requirements: "RF, 루프탑 가든+이벤트" },
+      { type: "support", ratio: 0.10, requirements: "기계실, 코어, 서버룸" },
+    ],
+  },
+  constraints: [
+    "지상 8층, 지하 1층 규모 (높이 약 40m)",
+    "성수동 카페거리와의 보행 연결성 확보",
+    "저층부 브랜드 경험 공간 — 인스톨레이션/갤러리 필수",
+    "층별 서로 다른 건축가 스타일 배분 가능",
+    "각 층이 독립적 공간 경험을 제공하되 전체 브랜드 정체성 유지",
+  ],
+  client_vision: "건축 자체가 브랜드 경험이 되는 본사. 매 층마다 다른 공간 경험, 예술과 상업의 경계를 허무는 실험적 공간",
+};
+
 export async function POST(request: Request) {
   const body = await request.json();
-  const { panelIds, context } = body as {
+  const { panelIds, context, brief } = body as {
     panelIds: string[];
     context?: ProjectContext;
+    brief?: string;
   };
 
   if (!panelIds || panelIds.length < 2 || panelIds.length > 5) {
@@ -17,43 +58,17 @@ export async function POST(request: Request) {
     );
   }
 
-  const defaultContext: ProjectContext = {
-    site: {
-      location: "서울 용산 국제업무지구",
-      dimensions: [80, 60],
-      far: 1000,
-      bcr: 60,
-      height_limit: 300,
-      context: {
-        north: "40m 도로",
-        south: "한강 조망 (직선거리 800m)",
-        east: "인접 타워 250m",
-        west: "용산공원 (직선거리 200m)",
-      },
-    },
-    program: {
-      total_gfa: 48000,
-      uses: [
-        { type: "retail_culture", ratio: 0.08, requirements: "저층부 1~5F, 공공보이드 포함" },
-        { type: "premium_office", ratio: 0.15, requirements: "중저층 6~14F" },
-        { type: "office", ratio: 0.35, requirements: "중층 15~38F" },
-        { type: "hotel", ratio: 0.2, requirements: "고층 40~55F, 부티크 호텔" },
-        { type: "sky_lounge_observation", ratio: 0.07, requirements: "크라운 56~60F" },
-        { type: "mechanical_core", ratio: 0.1, requirements: "기계층, 코어, 피난안전구역" },
-        { type: "parking", ratio: 0.05, requirements: "지하 B1~B3" },
-      ],
-    },
-    constraints: [
-      "60층 규모, 높이 약 250m",
-      "남측 한강 조망 최대 확보",
-      "서측 용산공원과의 시각적/물리적 연결",
-      "저층부 공공 기여 (보이드, 문화시설) 필수",
-      "피난안전구역 매 25층 이내 배치 (건축법)",
-    ],
-    client_vision: "서울의 새로운 랜드마크, 업무+호텔+문화가 어우러진 수직 도시",
-  };
+  // Build context: explicit context > brief-augmented default > pure default
+  let projectContext: ProjectContext;
+  if (context) {
+    projectContext = context;
+  } else if (brief) {
+    projectContext = { ...DEFAULT_CONTEXT, client_vision: brief };
+  } else {
+    projectContext = DEFAULT_CONTEXT;
+  }
 
-  const session = createForumSession(panelIds, context ?? defaultContext);
+  const session = createForumSession(panelIds, projectContext);
 
   sessionStore.set(session.project_id, {
     session,

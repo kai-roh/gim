@@ -47,8 +47,8 @@ function extractGlobalGraph(forumResult: ForumResult): GlobalGraph {
   const project = forumResult.project;
 
   // Extract total floors from constraints
-  let totalFloors = 60;
-  let basementFloors = 3;
+  let totalFloors = 8;
+  let basementFloors = 1;
 
   for (const c of project.constraints) {
     const match = c.match(/(\d+)층\s*규모/);
@@ -172,13 +172,11 @@ function printAsciiBuilding(graph: VerticalNodeGraph) {
 
   const zoneSymbols: Record<string, string> = {
     basement: "B",
-    podium: "P",
-    low_rise: "L",
-    mid_rise: "M",
-    sky_lobby: "S",
-    high_rise: "H",
-    mechanical: "X",
-    crown: "C",
+    ground: "G",
+    lower: "L",
+    middle: "M",
+    upper: "U",
+    penthouse: "P",
     rooftop: "R",
   };
 
@@ -186,22 +184,35 @@ function printAsciiBuilding(graph: VerticalNodeGraph) {
     elevator_core: "[]",
     stairwell: "||",
     parking: "PP",
-    retail: "$$",
-    cultural_facility: "CC",
+    brand_showroom: "BS",
+    exhibition_hall: "EH",
+    experiential_retail: "ER",
+    installation_space: "IS",
+    cafe: "CF",
+    flagship_store: "FS",
+    lobby: "LB",
+    atrium: "AT",
     public_void: "VV",
+    community_space: "CS",
+    event_space: "EV",
     premium_office: "PO",
     open_office: "OO",
-    hotel_room: "HR",
-    hotel_suite: "HS",
-    hotel_lobby: "HL",
-    sky_lounge: "SL",
+    executive_suite: "ES",
+    coworking: "CW",
+    focus_room: "FR",
+    lounge: "LG",
+    meditation_room: "MD",
+    cafeteria: "CA",
+    meeting_room: "MT",
+    auditorium: "AU",
+    nursery: "NU",
     sky_garden: "SG",
-    observation_deck: "OD",
-    refuge_area: "RA",
+    rooftop_bar: "RB",
+    gallery: "GA",
     mechanical_room: "MR",
-    outrigger: "OG",
+    electrical_room: "EL",
+    server_room: "SR",
     elevator_lobby: "EL",
-    restaurant: "RE",
   };
 
   for (const floor of floors) {
@@ -223,13 +234,11 @@ function printAsciiBuilding(graph: VerticalNodeGraph) {
       return sym;
     });
 
-    const hasOutrigger = floorNodes.some((n) => n.function === "outrigger");
-    const hasRefuge = floorNodes.some((n) => n.function === "refuge_area");
+    const hasBrand = floorNodes.some((n) => n.function === "brand_showroom" || n.function === "experiential_retail");
     const hasMech = floorNodes.some((n) => n.function === "mechanical_room" || n.function === "electrical_room");
 
     let marker = " ";
-    if (hasOutrigger) marker = "=";
-    else if (hasRefuge) marker = "*";
+    if (hasBrand) marker = "*";
     else if (hasMech) marker = "~";
 
     const barContent = symbols.join(" ");
@@ -238,8 +247,8 @@ function printAsciiBuilding(graph: VerticalNodeGraph) {
     console.log(`${paddedLabel} [${zoneChar}] ${bar} [${coreCount}c+${programNodes.length}p]`);
   }
 
-  console.log("\nLegend: B=basement P=podium L=low_rise M=mid_rise S=sky_lobby H=high_rise X=mechanical C=crown");
-  console.log("Markers: = outrigger  * refuge  ~ mechanical");
+  console.log("\nLegend: B=basement G=ground L=lower M=middle U=upper P=penthouse R=rooftop");
+  console.log("Markers: * brand_experience  ~ mechanical");
 }
 
 // ============================================================

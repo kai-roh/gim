@@ -1,28 +1,27 @@
 // ============================================================
-// Extended 7-Dimension Evaluation Engine
-// Builds on top of metrics.ts with 4 additional metrics
+// Extended 7-Dimension Evaluation Engine (Corporate HQ)
 // ============================================================
 
 import type {
   ProgramGraph,
   VerticalNodeGraph,
   FloorNode,
+  NodeFunction,
 } from "./types";
 import {
   connectivityAccuracy,
   verticalContinuityScore,
   zoneCoverageScore,
 } from "./metrics";
-import { getRefugeFloors, getMechanicalFloors, getOutriggerFloors } from "./rules";
 
 export interface EvaluationResult {
   connectivity_accuracy: number;
   vertical_continuity: number;
   zone_coverage: number;
-  structural_stability: number;
-  environmental: number;
+  structural_feasibility: number;
   code_compliance: number;
-  economic: number;
+  brand_identity: number;
+  spatial_quality: number;
   overall: number;
   issues: EvaluationIssue[];
 }
@@ -36,16 +35,15 @@ export interface EvaluationIssue {
 }
 
 // ============================================================
-// Structural Stability
-// Checks outrigger placement, core continuity, belt truss alignment
+// Structural Feasibility (Corporate HQ)
+// Checks core continuity, structural system appropriateness
 // ============================================================
 
-function structuralStability(voxel: VerticalNodeGraph): {
+function structuralFeasibility(voxel: VerticalNodeGraph): {
   score: number;
   issues: EvaluationIssue[];
 } {
   const issues: EvaluationIssue[] = [];
-  const totalFloors = voxel.global.total_floors;
 
   // 1. Core continuity: elevator_core on every floor
   const coreFloors = new Set<number>();
@@ -60,105 +58,46 @@ function structuralStability(voxel: VerticalNodeGraph): {
   if (missingCoreFloors.length > 0) {
     issues.push({
       severity: "critical",
-      metric: "structural_stability",
+      metric: "structural_feasibility",
       message: `Core missing on ${missingCoreFloors.length} floors`,
       floor: missingCoreFloors[0],
     });
   }
 
-  // 2. Outrigger placement check
-  const expectedOutriggers = getOutriggerFloors(totalFloors, 25);
-  const actualOutriggers = voxel.nodes
-    .filter((n) => n.function === "outrigger")
-    .map((n) => n.floor_level);
-  const outriggerScore = expectedOutriggers.length === 0
-    ? 1.0
-    : actualOutriggers.length / Math.max(expectedOutriggers.length, 1);
+  // 2. Large span detection: public_void and atrium spaces may need structural reinforcement
+  const largeSpanFunctions: NodeFunction[] = ["public_void", "atrium", "event_space", "auditorium", "installation_space"];
+  const largeSpanNodes = voxel.nodes.filter((n) => largeSpanFunctions.includes(n.function));
+  const largeSpanScore = largeSpanNodes.length <= 3 ? 1.0 : Math.max(0.5, 1.0 - (largeSpanNodes.length - 3) * 0.1);
 
-  if (actualOutriggers.length < expectedOutriggers.length) {
+  if (largeSpanNodes.length > 3) {
     issues.push({
       severity: "warning",
-      metric: "structural_stability",
-      message: `Expected ${expectedOutriggers.length} outrigger floors, found ${actualOutriggers.length}`,
+      metric: "structural_feasibility",
+      message: `${largeSpanNodes.length} large-span spaces detected — verify structural reinforcement`,
     });
   }
 
-  // 3. Belt truss at outrigger levels
-  const beltFloors = new Set(
-    voxel.nodes.filter((n) => n.function === "belt_truss").map((n) => n.floor_level)
+  // 3. Stairwell continuity check
+  const stairFloors = new Set(
+    voxel.nodes.filter((n) => n.function === "stairwell").map((n) => n.floor_level)
   );
-  const outriggerSet = new Set(actualOutriggers);
-  const misaligned = [...outriggerSet].filter((f) => !beltFloors.has(f));
-  const beltScore = outriggerSet.size === 0
-    ? 1.0
-    : 1.0 - misaligned.length / outriggerSet.size;
+  const missingStairFloors = [...allFloors].filter((f) => !stairFloors.has(f));
+  const stairScore = missingStairFloors.length === 0 ? 1.0 : Math.max(0, 1.0 - missingStairFloors.length / allFloors.size);
 
-  if (misaligned.length > 0) {
+  if (missingStairFloors.length > 0) {
     issues.push({
       severity: "warning",
-      metric: "structural_stability",
-      message: `Belt truss missing at ${misaligned.length} outrigger floors`,
+      metric: "structural_feasibility",
+      message: `Stairwells missing on ${missingStairFloors.length} floors`,
     });
   }
 
-  const score = round3(coreScore * 0.5 + outriggerScore * 0.3 + beltScore * 0.2);
+  const score = round3(coreScore * 0.4 + largeSpanScore * 0.3 + stairScore * 0.3);
   return { score, issues };
 }
 
 // ============================================================
-// Environmental
-// South-facing premium distribution, sky garden placement
-// ============================================================
-
-function environmentalScore(voxel: VerticalNodeGraph): {
-  score: number;
-  issues: EvaluationIssue[];
-} {
-  const issues: EvaluationIssue[] = [];
-
-  // 1. South-facing premium spaces (office/hotel with south position above mid-rise)
-  const premiumFunctions = ["premium_office", "executive_suite", "hotel_suite", "sky_lounge", "observation_deck"];
-  const southPremium = voxel.nodes.filter(
-    (n) => premiumFunctions.includes(n.function) && (n.position === "south" || n.position === "southeast" || n.position === "southwest")
-  );
-  const allPremium = voxel.nodes.filter((n) => premiumFunctions.includes(n.function));
-  const southRatio = allPremium.length > 0 ? southPremium.length / allPremium.length : 0;
-
-  if (southRatio < 0.3) {
-    issues.push({
-      severity: "warning",
-      metric: "environmental",
-      message: `Only ${Math.round(southRatio * 100)}% of premium spaces face south (target: 30%+)`,
-    });
-  }
-
-  // 2. Sky garden presence
-  const skyGardens = voxel.nodes.filter((n) => n.function === "sky_garden");
-  const gardenScore = skyGardens.length >= 2 ? 1.0 : skyGardens.length >= 1 ? 0.7 : 0.3;
-
-  if (skyGardens.length === 0) {
-    issues.push({
-      severity: "warning",
-      metric: "environmental",
-      message: "No sky gardens found in the building",
-    });
-  }
-
-  // 3. View premium average for high_rise/crown zones
-  const highNodes = voxel.nodes.filter(
-    (n) => n.floor_zone === "high_rise" || n.floor_zone === "crown"
-  );
-  const avgView = highNodes.length > 0
-    ? highNodes.reduce((sum, n) => sum + n.abstract.view_premium, 0) / highNodes.length
-    : 0;
-
-  const score = round3(Math.min(southRatio * 1.5, 1) * 0.4 + gardenScore * 0.3 + avgView * 0.3);
-  return { score, issues };
-}
-
-// ============================================================
-// Code Compliance
-// Refuge areas every 25 floors, mechanical spacing
+// Code Compliance (Corporate HQ — Korean Building Code)
 // ============================================================
 
 function codeCompliance(voxel: VerticalNodeGraph): {
@@ -168,127 +107,188 @@ function codeCompliance(voxel: VerticalNodeGraph): {
   const issues: EvaluationIssue[] = [];
   const totalFloors = voxel.global.total_floors;
 
-  // 1. Refuge areas every 25 floors
-  const expectedRefuge = getRefugeFloors(totalFloors, 25);
-  const actualRefuge = new Set(
-    voxel.nodes.filter((n) => n.function === "refuge_area").map((n) => n.floor_level)
-  );
-
-  let refugeMatches = 0;
-  for (const expected of expectedRefuge) {
-    // Allow ±2 floor tolerance
-    const found = [...actualRefuge].some((f) => Math.abs(f - expected) <= 2);
-    if (found) refugeMatches++;
+  // 1. Fire stairs: 6층 이상 건물은 직통계단 2개소 이상
+  const stairFloors = new Map<number, number>();
+  for (const n of voxel.nodes) {
+    if (n.function === "stairwell") {
+      stairFloors.set(n.floor_level, (stairFloors.get(n.floor_level) ?? 0) + 1);
+    }
   }
-  const refugeScore = expectedRefuge.length > 0 ? refugeMatches / expectedRefuge.length : 1.0;
 
-  if (refugeMatches < expectedRefuge.length) {
+  let stairDeficient = 0;
+  if (totalFloors >= 6) {
+    for (const [floor, count] of stairFloors) {
+      if (floor > 0 && count < 2) stairDeficient++;
+    }
+  }
+  const stairScore = stairDeficient === 0 ? 1.0 : Math.max(0, 1.0 - stairDeficient * 0.15);
+
+  if (stairDeficient > 0) {
     issues.push({
       severity: "critical",
       metric: "code_compliance",
-      message: `Refuge areas: ${refugeMatches}/${expectedRefuge.length} required positions covered`,
+      message: `${stairDeficient} floors have fewer than 2 fire stairs (required for 6+ story buildings)`,
     });
   }
 
-  // 2. Mechanical floor spacing
-  const expectedMech = getMechanicalFloors(totalFloors, 20);
-  const actualMech = new Set(
-    voxel.nodes.filter((n) => n.function === "mechanical_room").map((n) => n.floor_level)
-  );
-  let mechMatches = 0;
-  for (const expected of expectedMech) {
-    const found = [...actualMech].some((f) => Math.abs(f - expected) <= 3);
-    if (found) mechMatches++;
-  }
-  const mechScore = expectedMech.length > 0 ? mechMatches / expectedMech.length : 1.0;
-
-  if (mechMatches < expectedMech.length) {
+  // 2. Mechanical room presence
+  const hasMechanical = voxel.nodes.some((n) => n.function === "mechanical_room");
+  const mechScore = hasMechanical ? 1.0 : 0.5;
+  if (!hasMechanical) {
     issues.push({
       severity: "warning",
       metric: "code_compliance",
-      message: `Mechanical floors: ${mechMatches}/${expectedMech.length} expected positions`,
+      message: "No mechanical room found in the building",
     });
   }
 
-  // 3. Stairwell presence on every floor
-  const stairFloors = new Set(
-    voxel.nodes.filter((n) => n.function === "stairwell").map((n) => n.floor_level)
+  // 3. Elevator core continuity
+  const coreFloors = new Set(
+    voxel.nodes.filter((n) => n.function === "elevator_core").map((n) => n.floor_level)
   );
-  const missingStairs = [...new Set(voxel.nodes.map((n) => n.floor_level))].filter(
-    (f) => !stairFloors.has(f)
-  );
-  const stairScore = missingStairs.length === 0 ? 1.0 : 1.0 - missingStairs.length / voxel.nodes.length * 10;
+  const allFloors = [...new Set(voxel.nodes.map((n) => n.floor_level))];
+  const missingCore = allFloors.filter((f) => !coreFloors.has(f));
+  const coreScore = missingCore.length === 0 ? 1.0 : Math.max(0, 1.0 - missingCore.length / allFloors.length);
 
-  if (missingStairs.length > 0) {
+  if (missingCore.length > 0) {
     issues.push({
       severity: "critical",
       metric: "code_compliance",
-      message: `Stairwells missing on ${missingStairs.length} floors`,
+      message: `Elevator core missing on ${missingCore.length} floors`,
     });
   }
 
-  const score = round3(
-    Math.max(0, refugeScore * 0.4 + mechScore * 0.3 + Math.max(0, stairScore) * 0.3)
-  );
+  const score = round3(stairScore * 0.4 + mechScore * 0.2 + coreScore * 0.4);
   return { score, issues };
 }
 
 // ============================================================
-// Economic
-// Premium space ratio in high floors, hotel/office placement
+// Brand Identity
+// Evaluates how well brand-experience spaces are positioned
 // ============================================================
 
-function economicScore(voxel: VerticalNodeGraph): {
+function brandIdentity(voxel: VerticalNodeGraph): {
   score: number;
   issues: EvaluationIssue[];
 } {
   const issues: EvaluationIssue[] = [];
-  const totalFloors = voxel.global.total_floors;
 
-  // 1. High-floor premium ratio
-  const highFloorThreshold = totalFloors * 0.6;
-  const highFloorNodes = voxel.nodes.filter(
-    (n) => n.floor_level >= highFloorThreshold && !["elevator_core", "stairwell", "service_shaft", "elevator_lobby", "mechanical_room", "electrical_room"].includes(n.function)
+  // 1. Brand experience spaces in ground/lower zones
+  const brandFunctions: NodeFunction[] = [
+    "brand_showroom", "experiential_retail", "installation_space",
+    "exhibition_hall", "flagship_store", "gallery",
+  ];
+  const brandNodes = voxel.nodes.filter((n) => brandFunctions.includes(n.function));
+  const groundBrandNodes = brandNodes.filter(
+    (n) => n.floor_zone === "ground" || n.floor_zone === "lower"
   );
-  const premiumHighFloor = highFloorNodes.filter(
-    (n) => ["premium_office", "executive_suite", "hotel_suite", "sky_lounge", "observation_deck", "rooftop_bar", "hotel_room"].includes(n.function)
-  );
-  const premiumRatio = highFloorNodes.length > 0 ? premiumHighFloor.length / highFloorNodes.length : 0;
 
-  if (premiumRatio < 0.5) {
+  const brandPlacementScore = brandNodes.length > 0
+    ? groundBrandNodes.length / brandNodes.length
+    : 0.3;
+
+  if (brandNodes.length === 0) {
     issues.push({
-      severity: "info",
-      metric: "economic",
-      message: `Only ${Math.round(premiumRatio * 100)}% of high-floor space is premium (target: 50%+)`,
+      severity: "warning",
+      metric: "brand_identity",
+      message: "No brand experience spaces found in the building",
+    });
+  } else if (groundBrandNodes.length === 0) {
+    issues.push({
+      severity: "warning",
+      metric: "brand_identity",
+      message: "Brand experience spaces not on ground/lower floors — reduced street presence",
     });
   }
 
-  // 2. Hotel above office check (higher floors = higher premium)
-  const hotelFloors = voxel.nodes
-    .filter((n) => n.function === "hotel_room" || n.function === "hotel_suite")
-    .map((n) => n.floor_level);
-  const officeFloors = voxel.nodes
-    .filter((n) => n.function === "open_office" || n.function === "premium_office")
-    .map((n) => n.floor_level);
+  // 2. Lobby presence and quality
+  const lobbyNodes = voxel.nodes.filter((n) => n.function === "lobby");
+  const lobbyScore = lobbyNodes.length > 0 ? 1.0 : 0.3;
 
-  const avgHotel = hotelFloors.length > 0 ? hotelFloors.reduce((a, b) => a + b, 0) / hotelFloors.length : 0;
-  const avgOffice = officeFloors.length > 0 ? officeFloors.reduce((a, b) => a + b, 0) / officeFloors.length : 0;
-  const hotelAboveOffice = avgHotel > avgOffice ? 1.0 : 0.5;
-
-  if (avgHotel <= avgOffice && hotelFloors.length > 0) {
+  if (lobbyNodes.length === 0) {
     issues.push({
-      severity: "info",
-      metric: "economic",
-      message: "Hotel floors should be above office floors for view premium",
+      severity: "warning",
+      metric: "brand_identity",
+      message: "No dedicated lobby space found",
     });
   }
 
-  // 3. Prestige distribution
-  const avgPrestige = voxel.nodes.length > 0
-    ? voxel.nodes.reduce((sum, n) => sum + n.abstract.prestige, 0) / voxel.nodes.length
+  // 3. Public void / atrium for brand statement
+  const voidNodes = voxel.nodes.filter(
+    (n) => n.function === "public_void" || n.function === "atrium"
+  );
+  const voidScore = voidNodes.length > 0 ? 1.0 : 0.5;
+
+  // 4. Average brand_expression score
+  const avgBrandExpr = voxel.nodes.length > 0
+    ? voxel.nodes.reduce((sum, n) => sum + n.abstract.brand_expression, 0) / voxel.nodes.length
     : 0;
 
-  const score = round3(premiumRatio * 0.4 + hotelAboveOffice * 0.3 + avgPrestige * 0.3);
+  const score = round3(brandPlacementScore * 0.3 + lobbyScore * 0.2 + voidScore * 0.2 + avgBrandExpr * 0.3);
+  return { score, issues };
+}
+
+// ============================================================
+// Spatial Quality
+// Natural light, views, ceiling heights, spatial flow
+// ============================================================
+
+function spatialQuality(voxel: VerticalNodeGraph): {
+  score: number;
+  issues: EvaluationIssue[];
+} {
+  const issues: EvaluationIssue[] = [];
+
+  // 1. South-facing premium spaces
+  const premiumFunctions: NodeFunction[] = [
+    "premium_office", "executive_suite", "lounge", "sky_garden",
+    "brand_showroom", "gallery", "rooftop_bar",
+  ];
+  const southPremium = voxel.nodes.filter(
+    (n) => premiumFunctions.includes(n.function) &&
+      (n.position === "south" || n.position === "southeast" || n.position === "southwest")
+  );
+  const allPremium = voxel.nodes.filter((n) => premiumFunctions.includes(n.function));
+  const southRatio = allPremium.length > 0 ? southPremium.length / allPremium.length : 0;
+
+  if (southRatio < 0.3 && allPremium.length > 0) {
+    issues.push({
+      severity: "info",
+      metric: "spatial_quality",
+      message: `Only ${Math.round(southRatio * 100)}% of premium spaces face south (target: 30%+)`,
+    });
+  }
+
+  // 2. Green/garden spaces
+  const gardenNodes = voxel.nodes.filter((n) => n.function === "sky_garden");
+  const gardenScore = gardenNodes.length >= 1 ? 1.0 : 0.5;
+
+  if (gardenNodes.length === 0) {
+    issues.push({
+      severity: "info",
+      metric: "spatial_quality",
+      message: "No sky garden / rooftop garden found",
+    });
+  }
+
+  // 3. Average spatial_quality score
+  const avgSQ = voxel.nodes.length > 0
+    ? voxel.nodes.reduce((sum, n) => sum + n.abstract.spatial_quality, 0) / voxel.nodes.length
+    : 0;
+
+  // 4. Office floor view quality
+  const officeFunctions: NodeFunction[] = ["open_office", "premium_office", "executive_suite", "coworking"];
+  const officeNodes = voxel.nodes.filter((n) => officeFunctions.includes(n.function));
+  const avgOfficeView = officeNodes.length > 0
+    ? officeNodes.reduce((sum, n) => sum + n.abstract.view_premium, 0) / officeNodes.length
+    : 0;
+
+  const score = round3(
+    Math.min(southRatio * 1.5, 1) * 0.25 +
+    gardenScore * 0.2 +
+    avgSQ * 0.3 +
+    avgOfficeView * 0.25
+  );
   return { score, issues };
 }
 
@@ -305,34 +305,34 @@ export function evaluateGraphFull(
   const vc = verticalContinuityScore(program, voxel);
   const zc = zoneCoverageScore(program, voxel);
 
-  // New 4 metrics
-  const ss = structuralStability(voxel);
-  const env = environmentalScore(voxel);
+  // New 4 metrics (Corporate HQ specific)
+  const sf = structuralFeasibility(voxel);
   const cc = codeCompliance(voxel);
-  const econ = economicScore(voxel);
+  const bi = brandIdentity(voxel);
+  const sq = spatialQuality(voxel);
 
   // Weighted overall
   const weights = {
     connectivity_accuracy: 0.15,
-    vertical_continuity: 0.15,
+    vertical_continuity: 0.10,
     zone_coverage: 0.10,
-    structural_stability: 0.20,
-    environmental: 0.10,
+    structural_feasibility: 0.15,
     code_compliance: 0.20,
-    economic: 0.10,
+    brand_identity: 0.15,
+    spatial_quality: 0.15,
   };
 
   const overall = round3(
     ca * weights.connectivity_accuracy +
     vc * weights.vertical_continuity +
     zc * weights.zone_coverage +
-    ss.score * weights.structural_stability +
-    env.score * weights.environmental +
+    sf.score * weights.structural_feasibility +
     cc.score * weights.code_compliance +
-    econ.score * weights.economic
+    bi.score * weights.brand_identity +
+    sq.score * weights.spatial_quality
   );
 
-  const allIssues = [...ss.issues, ...env.issues, ...cc.issues, ...econ.issues];
+  const allIssues = [...sf.issues, ...cc.issues, ...bi.issues, ...sq.issues];
   allIssues.sort((a, b) => {
     const sev = { critical: 0, warning: 1, info: 2 };
     return sev[a.severity] - sev[b.severity];
@@ -342,10 +342,10 @@ export function evaluateGraphFull(
     connectivity_accuracy: ca,
     vertical_continuity: vc,
     zone_coverage: zc,
-    structural_stability: ss.score,
-    environmental: env.score,
+    structural_feasibility: sf.score,
     code_compliance: cc.score,
-    economic: econ.score,
+    brand_identity: bi.score,
+    spatial_quality: sq.score,
     overall,
     issues: allIssues,
   };

@@ -3,14 +3,13 @@
 import React, { useEffect, useCallback } from "react";
 import { GraphProvider, useGraph } from "@/lib/graph-context";
 import { ForumProvider } from "@/lib/forum-context";
-import { TowerMinimap } from "./TowerMinimap";
+import type { VerticalNodeGraph } from "@gim/core";
 import { ForumPanel } from "./ForumPanel";
-import { VerticalGraphViewer } from "./VerticalGraphViewer";
+import { BuildingFloorView } from "./BuildingFloorView";
 import { MassViewer3D } from "./MassViewer3D";
 import { NodeInspector } from "./NodeInspector";
 import { NodeEditor } from "./NodeEditor";
 import { EvaluationDashboard } from "./EvaluationDashboard";
-import { ChatInterface } from "./ChatInterface";
 
 function AppContent() {
   const { loadGraph, state, dispatch, undo, redo } = useGraph();
@@ -38,102 +37,87 @@ function AppContent() {
     return () => window.removeEventListener("keydown", handler);
   }, [undo, redo, dispatch]);
 
-  if (state.loading) {
-    return (
-      <div style={loadingStyle}>
-        <p>Loading graph data...</p>
-      </div>
-    );
-  }
+  // Forum → Graph bridge
+  const handleGraphGenerated = useCallback(
+    (graph: VerticalNodeGraph) => {
+      dispatch({ type: "LOAD_GRAPH_SUCCESS", graph });
+    },
+    [dispatch]
+  );
 
-  if (state.error) {
-    return (
-      <div style={loadingStyle}>
-        <p style={{ color: "#e45444" }}>Error: {state.error}</p>
-        <p style={{ color: "#666", marginTop: 8 }}>
-          Run <code>npm run graph</code> first to generate graph data.
-        </p>
-      </div>
-    );
-  }
-
-  if (!state.graph) return null;
+  const hasGraph = !!state.graph;
 
   return (
-    <div style={shellStyle}>
-      {/* Main area */}
-      <div style={mainAreaStyle}>
-        {/* W1: Forum Panel */}
-        <div style={forumPanelStyle}>
-          <ForumPanel />
-        </div>
-
-        {/* Tower Minimap */}
-        <div style={towerPanelStyle}>
-          <TowerMinimap />
-        </div>
-
-        {/* W2: D3 Graph */}
-        <div style={graphPanelStyle}>
-          <VerticalGraphViewer />
-        </div>
-
-        {/* W3: 3D Viewer */}
-        <div style={viewer3dPanelStyle}>
-          <MassViewer3D />
-        </div>
-
-        {/* Right: Node Inspector + Editor + Evaluation */}
-        <div style={infoPanelStyle}>
-          {/* Edit mode toggle */}
-          <div style={editToggleBarStyle}>
-            <button
-              onClick={() => dispatch({ type: "TOGGLE_EDIT_MODE" })}
-              style={{
-                ...editToggleBtnStyle,
-                background: state.editMode ? "#1a2a3e" : "#1a1a2e",
-                color: state.editMode ? "#4488cc" : "#555",
-              }}
-            >
-              {state.editMode ? "Editing" : "View"}
-            </button>
+    <ForumProvider onGraphGenerated={handleGraphGenerated}>
+      <div style={shellStyle}>
+        <div style={mainAreaStyle}>
+          {/* W1: Forum Panel (chat-style) */}
+          <div style={forumPanelStyle}>
+            <ForumPanel />
           </div>
-          <NodeInspector />
-          <NodeEditor />
-          <div style={evalPanelStyle}>
-            <EvaluationDashboard />
-          </div>
+
+          {/* Graph panels */}
+          {state.loading ? (
+            <div style={placeholderStyle}>
+              <p style={{ color: "#666" }}>Loading graph data...</p>
+            </div>
+          ) : !hasGraph ? (
+            <div style={placeholderStyle}>
+              <p style={{ color: "#888", fontSize: 13 }}>
+                Run a forum session to generate the building graph
+              </p>
+              <p style={{ color: "#555", fontSize: 11, marginTop: 8 }}>
+                or run <code style={{ color: "#a6f" }}>npm run graph</code> to
+                load existing data
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* W2: Building Floor View */}
+              <div style={floorViewPanelStyle}>
+                <BuildingFloorView />
+              </div>
+
+              {/* W3: 3D Viewer */}
+              <div style={viewer3dPanelStyle}>
+                <MassViewer3D />
+              </div>
+
+              {/* Right: Node Inspector + Editor + Evaluation */}
+              <div style={infoPanelStyle}>
+                <div style={editToggleBarStyle}>
+                  <button
+                    onClick={() => dispatch({ type: "TOGGLE_EDIT_MODE" })}
+                    style={{
+                      ...editToggleBtnStyle,
+                      background: state.editMode ? "#1a2a3e" : "#1a1a2e",
+                      color: state.editMode ? "#4488cc" : "#555",
+                    }}
+                  >
+                    {state.editMode ? "Editing" : "View"}
+                  </button>
+                </div>
+                <NodeInspector />
+                <NodeEditor />
+                <div style={evalPanelStyle}>
+                  <EvaluationDashboard />
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
-
-      {/* Bottom: Chat Interface */}
-      <div style={chatPanelStyle}>
-        <ChatInterface />
-      </div>
-    </div>
+    </ForumProvider>
   );
 }
 
 export function AppShell() {
   return (
     <GraphProvider>
-      <ForumProvider>
-        <AppContent />
-      </ForumProvider>
+      <AppContent />
     </GraphProvider>
   );
 }
-
-const loadingStyle: React.CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  alignItems: "center",
-  justifyContent: "center",
-  height: "100vh",
-  background: "#0a0a0f",
-  color: "#e0e0e0",
-  fontFamily: "'SF Mono', 'Fira Code', monospace",
-};
 
 const shellStyle: React.CSSProperties = {
   display: "flex",
@@ -153,7 +137,7 @@ const mainAreaStyle: React.CSSProperties = {
 };
 
 const forumPanelStyle: React.CSSProperties = {
-  width: 320,
+  width: 360,
   minWidth: 320,
   borderRight: "1px solid #1a1a2e",
   display: "flex",
@@ -162,20 +146,24 @@ const forumPanelStyle: React.CSSProperties = {
   overflow: "hidden",
 };
 
-const towerPanelStyle: React.CSSProperties = {
-  width: 260,
-  minWidth: 260,
+const placeholderStyle: React.CSSProperties = {
+  flex: 1,
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  justifyContent: "center",
+  background: "#0a0a0f",
+  fontFamily: "'SF Mono', 'Fira Code', monospace",
+};
+
+const floorViewPanelStyle: React.CSSProperties = {
+  width: 380,
+  minWidth: 320,
   borderRight: "1px solid #1a1a2e",
   display: "flex",
   flexDirection: "column",
   background: "#0d0d15",
   overflow: "hidden",
-};
-
-const graphPanelStyle: React.CSSProperties = {
-  flex: 1,
-  minWidth: 0,
-  position: "relative",
 };
 
 const viewer3dPanelStyle: React.CSSProperties = {
@@ -213,10 +201,4 @@ const evalPanelStyle: React.CSSProperties = {
   borderTop: "1px solid #1a1a2e",
   overflowY: "auto",
   maxHeight: "40%",
-};
-
-const chatPanelStyle: React.CSSProperties = {
-  height: 160,
-  minHeight: 120,
-  borderTop: "1px solid #1a1a2e",
 };

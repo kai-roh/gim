@@ -20,7 +20,7 @@ if (!architectId) {
   for (const id of ids) {
     const profile = loadArchitectProfile(id);
     const cat =
-      profile.category === "supertall_specialist" ? "🏗️  초고층" : "💡 사상가";
+      profile.category === "design_practice_master" ? "🏗️  실무" : "💡 사상가";
     console.log(`  ${cat}  ${id.padEnd(20)} ${profile.reference}`);
   }
   console.log("─".repeat(60));

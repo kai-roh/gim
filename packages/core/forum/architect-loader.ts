@@ -49,8 +49,8 @@ export function buildSystemPrompt(profile: ArchitectProfile, dataDir?: string): 
   let template = fs.readFileSync(templatePath, "utf-8");
 
   const categoryLabel =
-    profile.category === "supertall_specialist"
-      ? "초고층 실무 마스터 (Supertall Specialist)"
+    profile.category === "design_practice_master"
+      ? "실무 마스터 (Design Practice Master)"
       : "건축 사상 마스터 (Architectural Visionary)";
 
   const replacements: Record<string, string> = {
@@ -62,17 +62,15 @@ export function buildSystemPrompt(profile: ArchitectProfile, dataDir?: string): 
     "{{representative_buildings}}": profile.knowledge_base.representative_buildings
       .map((b) => `- ${b}`)
       .join("\n"),
-    "{{supertall_principles}}": profile.supertall_principles
+    "{{design_principles}}": profile.design_principles
       .map((p) => `- ${p}`)
       .join("\n"),
-    "{{base_strategy}}": profile.vertical_preferences.base_strategy,
-    "{{tower_form}}": profile.vertical_preferences.tower_form,
-    "{{top_strategy}}": profile.vertical_preferences.top_strategy,
-    "{{core_philosophy}}": profile.vertical_preferences.core_philosophy,
-    "{{sky_lobby_preference}}": profile.vertical_preferences.sky_lobby_preference
-      ? "선호"
-      : "비선호",
-    "{{mixed_use_transition}}": profile.vertical_preferences.mixed_use_transition,
+    "{{ground_strategy}}": profile.spatial_preferences.ground_strategy,
+    "{{form_language}}": profile.spatial_preferences.form_language,
+    "{{facade_approach}}": profile.spatial_preferences.facade_approach,
+    "{{interior_philosophy}}": profile.spatial_preferences.interior_philosophy,
+    "{{material_expression}}": profile.spatial_preferences.material_expression,
+    "{{light_strategy}}": profile.spatial_preferences.light_strategy,
     "{{structure_expression}}": profile.expression_rules.structure_expression,
     "{{facade_language}}": profile.expression_rules.facade_language,
     "{{material_palette}}": profile.expression_rules.material_palette.join(", "),
