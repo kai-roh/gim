@@ -3,7 +3,7 @@
 import React, { useEffect, useCallback } from "react";
 import { GraphProvider, useGraph } from "@/lib/graph-context";
 import { ForumProvider } from "@/lib/forum-context";
-import type { VerticalNodeGraph } from "@gim/core";
+import type { VerticalNodeGraph, SpatialMassGraph } from "@gim/core";
 import { ForumPanel } from "./ForumPanel";
 import { BuildingFloorView } from "./BuildingFloorView";
 import { MassViewer3D } from "./MassViewer3D";
@@ -11,6 +11,8 @@ import { NodeInspector } from "./NodeInspector";
 import { NodeEditor } from "./NodeEditor";
 import { EvaluationDashboard } from "./EvaluationDashboard";
 import { RenderPanel } from "./RenderPanel";
+import { MassGraphViewer } from "./MassGraphViewer";
+import SpatialGraphPanel from "./SpatialGraphPanel";
 
 function AppContent() {
   const { loadGraph, state, dispatch, undo, redo } = useGraph();
@@ -46,13 +48,20 @@ function AppContent() {
     [dispatch]
   );
 
-  const hasGraph = !!state.graph;
+  const handleMassGraphGenerated = useCallback(
+    (massGraph: SpatialMassGraph) => {
+      dispatch({ type: "LOAD_MASS_GRAPH_SUCCESS", massGraph });
+    },
+    [dispatch]
+  );
+
+  const hasGraph = !!state.graph || !!state.massGraph;
 
   return (
-    <ForumProvider onGraphGenerated={handleGraphGenerated}>
+    <ForumProvider onGraphGenerated={handleGraphGenerated} onMassGraphGenerated={handleMassGraphGenerated}>
       <div style={shellStyle}>
         <div style={mainAreaStyle}>
-          {/* W1: Forum Panel (chat-style) */}
+          {/* Left: Forum Panel */}
           <div style={forumPanelStyle}>
             <ForumPanel />
           </div>
@@ -72,20 +81,58 @@ function AppContent() {
                 load existing data
               </p>
             </div>
+          ) : state.graphVersion === 2 ? (
+            <>
+              {/* V2 Layout: Center + Right */}
+              {/* Center: 3D Viewer (top ~65%) + Mass Inspector / BuildingFloorView (bottom ~35%) */}
+              <div style={v2CenterPanelStyle}>
+                <div style={{ flex: "0 0 65%", minHeight: 0, position: "relative" }}>
+                  <MassViewer3D />
+                  <RenderPanel />
+                </div>
+                <div style={{ flex: "0 0 35%", minHeight: 0, borderTop: "1px solid #1a1a2e", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+                  <div style={editToggleBarStyle}>
+                    <button
+                      onClick={() => dispatch({ type: "TOGGLE_EDIT_MODE" })}
+                      style={{
+                        ...editToggleBtnStyle,
+                        background: state.editMode ? "#1a2a3e" : "#1a1a2e",
+                        color: state.editMode ? "#4488cc" : "#555",
+                      }}
+                    >
+                      {state.editMode ? "Editing" : "View"}
+                    </button>
+                  </div>
+                  <div style={{ flex: 1, overflow: "auto" }}>
+                    <NodeInspector />
+                    <NodeEditor />
+                    <BuildingFloorView />
+                  </div>
+                </div>
+              </div>
+
+              {/* Right: SpatialGraphPanel (top ~60%) + EvaluationDashboard (bottom ~40%) */}
+              <div style={v2RightPanelStyle}>
+                <div style={{ flex: "0 0 60%", minHeight: 0, overflow: "hidden" }}>
+                  <SpatialGraphPanel />
+                </div>
+                <div style={{ flex: "0 0 40%", minHeight: 0, borderTop: "1px solid #1a1a2e", overflowY: "auto" }}>
+                  <EvaluationDashboard />
+                </div>
+              </div>
+            </>
           ) : (
             <>
-              {/* W2: Building Floor View */}
+              {/* V1 Layout: BuildingFloorView + 3D Viewer + Info Panel */}
               <div style={floorViewPanelStyle}>
                 <BuildingFloorView />
               </div>
 
-              {/* W3: 3D Viewer */}
               <div style={viewer3dPanelStyle}>
                 <MassViewer3D />
                 <RenderPanel />
               </div>
 
-              {/* Right: Node Inspector + Editor + Evaluation */}
               <div style={infoPanelStyle}>
                 <div style={editToggleBarStyle}>
                   <button
@@ -139,8 +186,8 @@ const mainAreaStyle: React.CSSProperties = {
 };
 
 const forumPanelStyle: React.CSSProperties = {
-  width: 360,
-  minWidth: 320,
+  width: 400,
+  minWidth: 360,
   borderRight: "1px solid #1a1a2e",
   display: "flex",
   flexDirection: "column",
@@ -158,6 +205,27 @@ const placeholderStyle: React.CSSProperties = {
   fontFamily: "'SF Mono', 'Fira Code', monospace",
 };
 
+// V2 layout styles
+const v2CenterPanelStyle: React.CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  display: "flex",
+  flexDirection: "column",
+  position: "relative",
+  borderLeft: "1px solid #1a1a2e",
+};
+
+const v2RightPanelStyle: React.CSSProperties = {
+  width: 300,
+  minWidth: 300,
+  borderLeft: "1px solid #1a1a2e",
+  background: "#0d0d15",
+  display: "flex",
+  flexDirection: "column",
+  overflow: "hidden",
+};
+
+// V1 layout styles
 const floorViewPanelStyle: React.CSSProperties = {
   width: 380,
   minWidth: 320,
@@ -176,8 +244,8 @@ const viewer3dPanelStyle: React.CSSProperties = {
 };
 
 const infoPanelStyle: React.CSSProperties = {
-  width: 280,
-  minWidth: 280,
+  width: 300,
+  minWidth: 300,
   borderLeft: "1px solid #1a1a2e",
   background: "#0d0d15",
   display: "flex",

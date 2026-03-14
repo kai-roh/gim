@@ -8,6 +8,8 @@ import {
   FUNC_COLORS,
   EDGE_COLORS,
   FUNC_ORDER,
+  MASS_TYPE_COLORS,
+  MASS_RELATION_COLORS,
   floorLabel,
 } from "@/lib/graph-colors";
 
@@ -24,7 +26,12 @@ interface ZoneGroup {
 
 export function BuildingFloorView() {
   const { state, dispatch } = useGraph();
-  const { graph, selectedNodeId, selectedFloor, activeEdgeTypes } = state;
+  const { graph, massGraph, graphVersion, selectedNodeId, selectedFloor, activeEdgeTypes } = state;
+
+  // ---- V2: Mass list mode ----
+  if (graphVersion === 2 && massGraph) {
+    return <MassListView massGraph={massGraph} selectedNodeId={selectedNodeId} dispatch={dispatch} />;
+  }
 
   // Connected node IDs for highlight
   const connectedIds = useMemo(() => {
@@ -323,6 +330,185 @@ export function BuildingFloorView() {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ============================================================
+// V2: Mass List View
+// ============================================================
+
+import type { SpatialMassGraph } from "@gim/core";
+import type { GraphAction } from "@/lib/graph-context";
+
+function MassListView({
+  massGraph,
+  selectedNodeId,
+  dispatch,
+}: {
+  massGraph: SpatialMassGraph;
+  selectedNodeId: string | null;
+  dispatch: React.Dispatch<GraphAction>;
+}) {
+  const g = massGraph.global;
+  const nodes = massGraph.nodes;
+  const relations = massGraph.relations;
+
+  // Sort nodes by floor_range (top to bottom)
+  const sortedNodes = useMemo(
+    () => [...nodes].sort((a, b) => b.floor_range[1] - a.floor_range[1] || b.floor_range[0] - a.floor_range[0]),
+    [nodes],
+  );
+
+  const selectedNode = nodes.find((n) => n.id === selectedNodeId) ?? null;
+
+  // Connected node IDs
+  const connectedIds = useMemo(() => {
+    if (!selectedNodeId) return new Set<string>();
+    const ids = new Set<string>();
+    for (const r of relations) {
+      if (r.source === selectedNodeId) ids.add(r.target);
+      if (r.target === selectedNodeId) ids.add(r.source);
+    }
+    return ids;
+  }, [selectedNodeId, relations]);
+
+  // Relations grouped by family
+  const families = useMemo(
+    () => [...new Set(relations.map((r) => r.family))],
+    [relations],
+  );
+
+  return (
+    <div style={containerStyle}>
+      {/* Header */}
+      <div style={headerStyle}>
+        <h2 style={{ fontSize: 14, color: "#fff", margin: 0, marginBottom: 4 }}>
+          {g.site.location}
+        </h2>
+        <div style={statsStyle}>
+          <span>{g.site.dimensions[0]}m × {g.site.dimensions[1]}m</span>
+          <span style={statSep}>|</span>
+          <span>FAR {g.site.far}%</span>
+          <span style={statSep}>|</span>
+          <span>B{g.basement_floors} ~ {g.total_floors}F</span>
+        </div>
+        <div style={statsStyle}>
+          <span style={{ color: "#4488cc" }}>{nodes.length} masses</span>
+          <span style={statSep}>|</span>
+          <span>{relations.length} relations</span>
+          <span style={statSep}>|</span>
+          <span style={{ color: "#666", fontSize: 9 }}>v2</span>
+        </div>
+      </div>
+
+      {/* Relation family filter */}
+      <div style={edgeFilterStyle}>
+        {families.map((fam) => (
+          <button
+            key={fam}
+            onClick={() => dispatch({ type: "TOGGLE_EDGE_TYPE", edgeType: fam })}
+            style={{
+              ...edgeBtnStyle,
+              background: "#2a2a4e",
+              color: MASS_RELATION_COLORS[fam] || "#aaf",
+              borderColor: MASS_RELATION_COLORS[fam] || "#55a",
+            }}
+          >
+            {fam}
+          </button>
+        ))}
+      </div>
+
+      {/* Mass node list */}
+      <div style={scrollAreaStyle}>
+        {sortedNodes.map((node) => {
+          const isSelected = node.id === selectedNodeId;
+          const isConnected = connectedIds.has(node.id);
+          const color = MASS_TYPE_COLORS[node.type] || "#555";
+
+          return (
+            <div
+              key={node.id}
+              onClick={() => dispatch({ type: "SELECT_NODE", nodeId: node.id })}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                padding: "8px 16px",
+                cursor: "pointer",
+                background: isSelected
+                  ? "rgba(100,140,255,0.12)"
+                  : isConnected
+                    ? "rgba(100,140,255,0.04)"
+                    : undefined,
+                borderLeft: isSelected ? `3px solid ${color}` : "3px solid transparent",
+                opacity: selectedNodeId && !isSelected && !isConnected ? 0.4 : 1,
+                transition: "all 0.12s",
+              }}
+            >
+              {/* Type indicator */}
+              <div
+                style={{
+                  width: 10,
+                  height: 10,
+                  borderRadius: node.type === "void" ? 0 : "50%",
+                  background: node.type === "void" ? "transparent" : color,
+                  border: node.type === "void" ? `2px dashed ${color}` : "none",
+                  flexShrink: 0,
+                }}
+              />
+              {/* Info */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 11, color: "#ddd", fontWeight: isSelected ? 600 : 400 }}>
+                  {node.label}
+                </div>
+                <div style={{ fontSize: 9, color: "#666", marginTop: 2 }}>
+                  <span style={{ color: ZONE_COLORS[node.floor_zone] || "#555" }}>
+                    {floorLabel(node.floor_range[0])}~{floorLabel(node.floor_range[1])}
+                  </span>
+                  <span style={{ margin: "0 4px", color: "#333" }}>·</span>
+                  <span>{node.geometry.primitive}</span>
+                  <span style={{ margin: "0 4px", color: "#333" }}>·</span>
+                  <span>{node.geometry.scale.category}</span>
+                </div>
+                {node.programs.length > 0 && (
+                  <div style={{ fontSize: 8, color: "#555", marginTop: 2 }}>
+                    {node.programs.slice(0, 4).join(", ")}
+                    {node.programs.length > 4 ? ` +${node.programs.length - 4}` : ""}
+                  </div>
+                )}
+              </div>
+              {/* Type badge */}
+              <div style={{ fontSize: 8, color, textTransform: "uppercase", flexShrink: 0 }}>
+                {node.type}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Selected node detail */}
+      {selectedNode && (
+        <div style={{ ...selectedInfoStyle, flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{
+              width: 8, height: 8, borderRadius: "50%",
+              background: MASS_TYPE_COLORS[selectedNode.type] || "#555",
+            }} />
+            <span style={{ color: "#ccc", fontWeight: 500, fontSize: 11 }}>
+              {selectedNode.label}
+            </span>
+          </div>
+          <div style={{ fontSize: 9, color: "#666" }}>
+            {selectedNode.narrative.architectural_description.slice(0, 100)}
+            {selectedNode.narrative.architectural_description.length > 100 ? "…" : ""}
+          </div>
+          <div style={{ fontSize: 8, color: "#555" }}>
+            {selectedNode.geometry.scale.hint.width.toFixed(0)}m × {selectedNode.geometry.scale.hint.depth.toFixed(0)}m × {selectedNode.geometry.scale.hint.height.toFixed(0)}m
+          </div>
+        </div>
+      )}
     </div>
   );
 }

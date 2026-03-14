@@ -5,7 +5,7 @@ import * as d3 from "d3";
 import type { EvaluationResult, EvaluationIssue } from "@gim/core";
 import { useGraph } from "@/lib/graph-context";
 
-const METRIC_LABELS: Record<string, string> = {
+const V1_METRIC_LABELS: Record<string, string> = {
   connectivity_accuracy: "Connectivity",
   vertical_continuity: "Continuity",
   zone_coverage: "Coverage",
@@ -15,13 +15,30 @@ const METRIC_LABELS: Record<string, string> = {
   spatial_quality: "Spatial",
 };
 
-const METRIC_KEYS = Object.keys(METRIC_LABELS);
+const V2_METRIC_LABELS: Record<string, string> = {
+  relation_satisfaction: "Relations",
+  model_readiness: "Model",
+  narrative_completeness: "Narrative",
+  graph_coherence: "Coherence",
+  structural_feasibility: "Structure",
+};
+
+const reEvalBtnStyle: React.CSSProperties = {
+  background: "transparent",
+  border: "1px solid #2a2a3e",
+  borderRadius: 3,
+  color: "#666",
+  fontSize: 9,
+  padding: "2px 8px",
+  cursor: "pointer",
+  fontFamily: "inherit",
+};
 
 export function EvaluationDashboard() {
-  const [evaluation, setEvaluation] = useState<EvaluationResult | null>(null);
+  const [evaluation, setEvaluation] = useState<(EvaluationResult & { version?: number }) | null>(null);
   const [loading, setLoading] = useState(false);
   const radarRef = useRef<SVGSVGElement>(null);
-  const { dispatch } = useGraph();
+  const { state, dispatch } = useGraph();
 
   const loadEvaluation = useCallback(async () => {
     setLoading(true);
@@ -39,6 +56,21 @@ export function EvaluationDashboard() {
   useEffect(() => {
     loadEvaluation();
   }, [loadEvaluation]);
+
+  // Re-evaluate when graph changes (debounced)
+  const graphVersion = state.graphVersion;
+  const massGraph = state.massGraph;
+  const graph = state.graph;
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      loadEvaluation();
+    }, 1000);
+    return () => clearTimeout(timeout);
+  }, [massGraph, graph, loadEvaluation]);
+
+  const metricLabels = evaluation?.version === 2 ? V2_METRIC_LABELS : V1_METRIC_LABELS;
+  const metricKeys = Object.keys(metricLabels);
 
   // Draw radar chart
   useEffect(() => {
@@ -58,7 +90,7 @@ export function EvaluationDashboard() {
       .append("g")
       .attr("transform", `translate(${cx},${cy})`);
 
-    const n = METRIC_KEYS.length;
+    const n = metricKeys.length;
     const angleStep = (2 * Math.PI) / n;
 
     // Grid circles
@@ -90,11 +122,11 @@ export function EvaluationDashboard() {
         .attr("dominant-baseline", "middle")
         .attr("fill", "#666")
         .attr("font-size", 8)
-        .text(METRIC_LABELS[METRIC_KEYS[i]]);
+        .text(metricLabels[metricKeys[i]]);
     }
 
     // Data polygon
-    const points = METRIC_KEYS.map((key, i) => {
+    const points = metricKeys.map((key, i) => {
       const val = (evaluation as any)[key] as number;
       const angle = i * angleStep - Math.PI / 2;
       return {
@@ -122,7 +154,7 @@ export function EvaluationDashboard() {
         .attr("r", 3)
         .attr("fill", overallColor);
     }
-  }, [evaluation]);
+  }, [evaluation, metricKeys, metricLabels]);
 
   if (loading) {
     return <div style={containerStyle}><span style={{ color: "#555" }}>Evaluating...</span></div>;
@@ -139,8 +171,13 @@ export function EvaluationDashboard() {
       {/* Header + Overall Score */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
         <div>
-          <div style={{ color: "#666", fontSize: 9, textTransform: "uppercase", letterSpacing: 1 }}>
-            Overall Score
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ color: "#666", fontSize: 9, textTransform: "uppercase", letterSpacing: 1 }}>
+              Overall Score
+            </div>
+            <button onClick={loadEvaluation} style={reEvalBtnStyle}>
+              Re-evaluate
+            </button>
           </div>
           <div style={{ color: overallColor, fontSize: 24, fontWeight: "bold" }}>
             {Math.round(evaluation.overall * 100)}%
@@ -151,14 +188,14 @@ export function EvaluationDashboard() {
 
       {/* Metric bars */}
       <div style={{ marginBottom: 12 }}>
-        {METRIC_KEYS.map((key) => {
+        {metricKeys.map((key) => {
           const val = (evaluation as any)[key] as number;
           const pct = Math.round(val * 100);
           const color = val >= 0.75 ? "#44c464" : val >= 0.5 ? "#d4a444" : "#e45444";
           return (
             <div key={key} style={{ marginBottom: 4 }}>
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10 }}>
-                <span style={{ color: "#888" }}>{METRIC_LABELS[key]}</span>
+                <span style={{ color: "#888" }}>{metricLabels[key]}</span>
                 <span style={{ color }}>{pct}%</span>
               </div>
               <div style={{ height: 3, background: "#1a1a2e", borderRadius: 2 }}>

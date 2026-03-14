@@ -4,7 +4,7 @@ import React, { useRef, useEffect, useCallback } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { useGraph } from "@/lib/graph-context";
-import { ZONE_COLORS_HEX, FUNC_COLORS_HEX } from "@/lib/graph-colors";
+import { ZONE_COLORS_HEX, FUNC_COLORS_HEX, MASS_TYPE_COLORS_HEX, getMassIdentityColorHex } from "@/lib/graph-colors";
 import {
   generateFloorOutline,
   getDominantFormDNA,
@@ -13,7 +13,7 @@ import {
   isInVoidCut,
   type ArchitectFormDNA,
 } from "@/lib/architect-form";
-import type { FloorNode, VerticalNodeGraph } from "@gim/core";
+import type { FloorNode, VerticalNodeGraph, SpatialMassGraph, MassNode, MassRelation } from "@gim/core";
 
 // ============================================================
 // Constants
@@ -56,7 +56,7 @@ interface FloorBuildData {
 
 interface SceneState {
   scene: THREE.Scene;
-  camera: THREE.PerspectiveCamera;
+  camera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
   renderer: THREE.WebGLRenderer;
   controls: OrbitControls;
   nodeMeshes: Map<string, THREE.Mesh>;
@@ -76,7 +76,187 @@ export function MassViewer3D() {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<SceneState | null>(null);
   const { state, dispatch } = useGraph();
-  const { graph, selectedNodeId, selectedFloor } = state;
+  const { graph, massGraph, graphVersion, selectedNodeId, selectedFloor } = state;
+
+  // ---- V2: SpatialMassGraph 3D rendering ----
+  const initSceneV2 = useCallback(() => {
+    if (!containerRef.current || !massGraph) return;
+    if (sceneRef.current) return;
+
+    const container = containerRef.current;
+    const W = container.clientWidth;
+    const H = container.clientHeight;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x000000);
+    scene.fog = new THREE.Fog(0x000000, 150, 500);
+
+    // Estimate building height from floor_range
+    const [floorMin, floorMax] = massGraph.metadata.floor_range;
+    const avgFloorH = 3.8;
+    const bldgH = (floorMax - floorMin + 1) * avgFloorH;
+
+    const frustumSize = bldgH * 1.5;
+    const aspect = W / H;
+    const camera = new THREE.OrthographicCamera(
+      -frustumSize * aspect / 2, frustumSize * aspect / 2,
+      frustumSize / 2, -frustumSize / 2,
+      0.1, 1000
+    );
+    camera.position.set(50, bldgH * 0.6, 60);
+    camera.lookAt(0, bldgH * 0.35, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance", preserveDrawingBuffer: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.6;
+    container.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, bldgH * 0.35, 0);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.minDistance = 12;
+    controls.maxDistance = 250;
+    controls.maxPolarAngle = Math.PI * 0.85;
+    controls.update();
+
+    // Lighting
+    scene.add(new THREE.HemisphereLight(0x7090c0, 0x1a1820, 0.7));
+    const key = new THREE.DirectionalLight(0xfff0dd, 1.8);
+    key.position.set(30, bldgH * 1.5, 40);
+    key.castShadow = true;
+    key.shadow.mapSize.set(2048, 2048);
+    const sc = Math.max(35, bldgH * 0.9);
+    key.shadow.camera.left = -sc; key.shadow.camera.right = sc;
+    key.shadow.camera.top = bldgH + 10; key.shadow.camera.bottom = -5;
+    key.shadow.bias = -0.0005;
+    key.shadow.normalBias = 0.02;
+    scene.add(key);
+    scene.add(new THREE.DirectionalLight(0x80a8d0, 0.6).translateX(-40).translateY(bldgH * 0.6));
+    scene.add(new THREE.DirectionalLight(0x90a0cc, 0.45).translateX(-15).translateY(bldgH * 0.4).translateZ(-50));
+
+    const ref: SceneState = {
+      scene, camera, renderer, controls,
+      nodeMeshes: new Map(),
+      floorSlabs: new Map(),
+      selectables: [],
+      animId: 0,
+      massGroup: new THREE.Group(),
+      detailGroup: new THREE.Group(),
+      floorData: [],
+    };
+    sceneRef.current = ref;
+
+    // Environment
+    buildMassGraphEnvironment(scene, massGraph);
+    // Build mass volumes
+    buildMassGraphVolumes(ref, massGraph, dispatch);
+
+    // Animate
+    function animate() {
+      ref.animId = requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    // Resize
+    const onResize = () => {
+      const w = container.clientWidth, h = container.clientHeight;
+      if (ref.camera instanceof THREE.OrthographicCamera) {
+        const newAspect = w / h;
+        ref.camera.left = -frustumSize * newAspect / 2;
+        ref.camera.right = frustumSize * newAspect / 2;
+        ref.camera.updateProjectionMatrix();
+      } else if (ref.camera instanceof THREE.PerspectiveCamera) {
+        ref.camera.aspect = w / h;
+        ref.camera.updateProjectionMatrix();
+      }
+      renderer.setSize(w, h);
+    };
+    window.addEventListener("resize", onResize);
+
+    return () => {
+      window.removeEventListener("resize", onResize);
+      cancelAnimationFrame(ref.animId);
+      renderer.dispose();
+      if (container.contains(renderer.domElement)) container.removeChild(renderer.domElement);
+      sceneRef.current = null;
+    };
+  }, [massGraph, dispatch]);
+
+  // ---- V2: Selection highlight with fading ----
+  useEffect(() => {
+    if (graphVersion !== 2) return;
+    const ref = sceneRef.current;
+    if (!ref) return;
+
+    // Toggle void wireframes visibility
+    ref.massGroup.traverse((obj) => {
+      if (obj.userData?.voidWireframe) {
+        obj.visible = obj.userData.nodeId === selectedNodeId;
+      }
+    });
+
+    if (!selectedNodeId) {
+      // No selection: restore all to full opacity
+      ref.massGroup.traverse((obj) => {
+        if ((obj as THREE.Mesh).isMesh) {
+          const mat = (obj as THREE.Mesh).material;
+          if (Array.isArray(mat)) return;
+          if (mat instanceof THREE.MeshPhysicalMaterial || mat instanceof THREE.MeshStandardMaterial) {
+            const origOpacity = obj.userData?.massOriginalOpacity;
+            if (origOpacity !== undefined) {
+              mat.opacity = origOpacity;
+              mat.transparent = mat.opacity < 1.0;
+            }
+            mat.emissive?.setHex(0x141c28);
+            mat.emissiveIntensity = 0.08;
+          }
+        }
+      });
+      return;
+    }
+
+    // Build connected set
+    const connectedIds = new Set<string>();
+    if (massGraph) {
+      for (const rel of massGraph.relations) {
+        if (rel.source === selectedNodeId) connectedIds.add(rel.target);
+        if (rel.target === selectedNodeId) connectedIds.add(rel.source);
+      }
+    }
+
+    ref.massGroup.traverse((obj) => {
+      if ((obj as THREE.Mesh).isMesh) {
+        const mat = (obj as THREE.Mesh).material;
+        if (Array.isArray(mat)) return;
+        if (mat instanceof THREE.MeshPhysicalMaterial || mat instanceof THREE.MeshStandardMaterial) {
+          const nodeId = obj.userData?.nodeId;
+          if (nodeId === selectedNodeId) {
+            mat.opacity = 1.0;
+            mat.transparent = false;
+            mat.emissive?.setHex(0x222244);
+            mat.emissiveIntensity = 0.5;
+          } else if (connectedIds.has(nodeId)) {
+            mat.opacity = 0.6;
+            mat.transparent = true;
+            mat.emissive?.setHex(0x111122);
+            mat.emissiveIntensity = 0.15;
+          } else {
+            mat.opacity = 0.15;
+            mat.transparent = true;
+            mat.emissive?.setHex(0x000000);
+            mat.emissiveIntensity = 0.0;
+          }
+        }
+      }
+    });
+  }, [selectedNodeId, graphVersion, massGraph]);
 
   const initScene = useCallback(() => {
     if (!containerRef.current || !graph) return;
@@ -185,7 +365,10 @@ export function MassViewer3D() {
     };
   }, [graph, dispatch]);
 
-  useEffect(() => { return initScene(); }, [initScene]);
+  useEffect(() => {
+    if (graphVersion === 2 && massGraph) return initSceneV2();
+    if (graphVersion === 1 && graph) return initScene();
+  }, [initScene, initSceneV2, graphVersion, graph, massGraph]);
 
   // ---- Selected Floor Mode Effect ----
   useEffect(() => {
@@ -279,10 +462,17 @@ export function MassViewer3D() {
     return Array.from(byFloor.keys()).sort((a, b) => a - b);
   }, [graph]);
 
+  // V2 legend info
+  const v2Info = massGraph ? {
+    location: massGraph.global.site.location,
+    nodes: massGraph.nodes.length,
+    relations: massGraph.relations.length,
+  } : null;
+
   return (
     <div ref={containerRef} style={{ width: "100%", height: "100%", position: "relative" }}>
-      {/* Floor Selector Strip */}
-      {graph && floorLabels.length > 0 && (
+      {/* Floor Selector Strip (v1 only) */}
+      {graphVersion === 1 && graph && floorLabels.length > 0 && (
         <div style={floorSelectorStyle}>
           {floorLabels.slice().reverse().map((floor) => {
             const label = floor < 0 ? `B${Math.abs(floor)}` : `${floor}F`;
@@ -331,7 +521,8 @@ export function MassViewer3D() {
           })}
         </div>
       )}
-      {graph && (
+      {/* Legend — v1 */}
+      {graphVersion === 1 && graph && (
         <div style={legendStyle}>
           <div style={{ fontSize: 9, color: "#777", marginBottom: 3 }}>
             {graph.global.site.location}
@@ -343,6 +534,31 @@ export function MassViewer3D() {
             {selectedFloor !== null && selectedFloor !== undefined
               ? `Floor ${selectedFloor < 0 ? `B${Math.abs(selectedFloor)}` : `${selectedFloor}F`} selected`
               : "Mass view"}
+          </div>
+        </div>
+      )}
+      {/* Export buttons — v2 */}
+      {graphVersion === 2 && massGraph && (
+        <div style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 4, zIndex: 10 }}>
+          <button onClick={() => sceneRef.current && exportOBJ(sceneRef.current.scene, "gim_model.obj")} style={exportBtnStyle}>
+            OBJ
+          </button>
+          <button onClick={() => sceneRef.current && exportSTL(sceneRef.current.scene, "gim_model.stl")} style={exportBtnStyle}>
+            STL
+          </button>
+        </div>
+      )}
+      {/* Legend — v2 */}
+      {graphVersion === 2 && v2Info && (
+        <div style={legendStyle}>
+          <div style={{ fontSize: 9, color: "#777", marginBottom: 3 }}>
+            {v2Info.location}
+          </div>
+          <div style={{ fontSize: 8, color: "#555" }}>
+            {v2Info.nodes} masses | {v2Info.relations} relations
+          </div>
+          <div style={{ fontSize: 8, color: "#4488cc", marginTop: 2 }}>
+            SpatialMassGraph v2
           </div>
         </div>
       )}
@@ -372,7 +588,406 @@ const floorSelectorStyle: React.CSSProperties = {
 };
 
 // ============================================================
-// Environment
+// V2: SpatialMassGraph 3D Rendering
+// ============================================================
+
+const SKIN_MATERIALS: Record<string, Partial<THREE.MeshPhysicalMaterialParameters>> = {
+  glass:     { roughness: 0.05, metalness: 0.3, transparent: true, opacity: 0.55, clearcoat: 0.8 },
+  stone:     { roughness: 0.85, metalness: 0.05, transparent: false },
+  metal:     { roughness: 0.15, metalness: 0.75, transparent: false },
+  concrete:  { roughness: 0.7, metalness: 0.1, transparent: false },
+  composite: { roughness: 0.4, metalness: 0.3, transparent: true, opacity: 0.7 },
+};
+
+const POROSITY_FACTOR: Record<string, number> = {
+  solid: 1.0,
+  porous: 0.7,
+  open: 0.4,
+  transparent: 0.3,
+};
+
+interface MassPlacement {
+  node: MassNode;
+  x: number;
+  y: number;
+  z: number;
+  w: number;
+  h: number;
+  d: number;
+}
+
+function solveMassConstraints(massGraph: SpatialMassGraph): MassPlacement[] {
+  const nodes = massGraph.nodes;
+  const relations = massGraph.relations;
+  const avgFloorH = 3.8;
+
+  // Place each node based on floor_range → Y, then spread on X/Z
+  const placements = new Map<string, MassPlacement>();
+
+  // Initial placement: Y from floor_range, X/Z from hint dimensions
+  for (const node of nodes) {
+    const hint = node.geometry.scale.hint;
+    const w = hint.width || 15;
+    const d = hint.depth || 15;
+    const h = hint.height || ((node.floor_range[1] - node.floor_range[0] + 1) * avgFloorH);
+    const yBase = node.floor_range[0] * avgFloorH;
+
+    placements.set(node.id, { node, x: 0, y: yBase, z: 0, w, h, d });
+  }
+
+  // Topological sort for stack relations (above/below)
+  const stackEdges = relations.filter((r) => r.family === "stack");
+  const inDegree = new Map<string, number>();
+  const adj = new Map<string, string[]>();
+  for (const n of nodes) {
+    inDegree.set(n.id, 0);
+    adj.set(n.id, []);
+  }
+  for (const e of stackEdges) {
+    if (e.rule === "above" || e.rule === "floating") {
+      // source is above target
+      adj.get(e.target)?.push(e.source);
+      inDegree.set(e.source, (inDegree.get(e.source) || 0) + 1);
+    } else if (e.rule === "below") {
+      adj.get(e.source)?.push(e.target);
+      inDegree.set(e.target, (inDegree.get(e.target) || 0) + 1);
+    }
+  }
+
+  // BFS topological sort for Y placement
+  const queue: string[] = [];
+  for (const [id, deg] of inDegree) {
+    if (deg === 0) queue.push(id);
+  }
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    const curP = placements.get(cur)!;
+    for (const next of adj.get(cur) || []) {
+      const nextP = placements.get(next)!;
+      // Stack above: next sits on top of cur
+      nextP.y = Math.max(nextP.y, curP.y + curP.h);
+      inDegree.set(next, (inDegree.get(next) || 0) - 1);
+      if (inDegree.get(next) === 0) queue.push(next);
+    }
+  }
+
+  // X/Z spread: contact/adjacent relations push nodes apart, alignment pulls them together
+  // Simple force-based iteration
+  const placementArr = Array.from(placements.values());
+  for (let iter = 0; iter < 30; iter++) {
+    // Repulsion between overlapping nodes at same Y range
+    for (let i = 0; i < placementArr.length; i++) {
+      for (let j = i + 1; j < placementArr.length; j++) {
+        const a = placementArr[i];
+        const b = placementArr[j];
+
+        // Check Y overlap
+        const aTop = a.y + a.h;
+        const bTop = b.y + b.h;
+        const yOverlap = Math.min(aTop, bTop) - Math.max(a.y, b.y);
+        if (yOverlap <= 0) continue;
+
+        const dx = b.x - a.x;
+        const dz = b.z - a.z;
+        const dist = Math.sqrt(dx * dx + dz * dz) || 0.1;
+        const minDist = (a.w + b.w) / 2 + 2;
+
+        if (dist < minDist) {
+          const push = (minDist - dist) * 0.3;
+          const nx = dx / dist;
+          const nz = dz / dist;
+          a.x -= nx * push;
+          a.z -= nz * push;
+          b.x += nx * push;
+          b.z += nz * push;
+        }
+      }
+    }
+
+    // Contact relations: keep nodes touching
+    for (const rel of relations) {
+      if (rel.family !== "contact" && rel.family !== "connection") continue;
+      const a = placements.get(rel.source);
+      const b = placements.get(rel.target);
+      if (!a || !b) continue;
+
+      const dx = b.x - a.x;
+      const dz = b.z - a.z;
+      const dist = Math.sqrt(dx * dx + dz * dz) || 0.1;
+      const targetDist = (a.w + b.w) / 2 + 1;
+
+      if (dist > targetDist) {
+        const pull = (dist - targetDist) * 0.15;
+        const nx = dx / dist;
+        const nz = dz / dist;
+        a.x += nx * pull;
+        a.z += nz * pull;
+        b.x -= nx * pull;
+        b.z -= nz * pull;
+      }
+    }
+
+    // Alignment: pull X or Z together
+    for (const rel of relations) {
+      if (rel.family !== "alignment") continue;
+      const a = placements.get(rel.source);
+      const b = placements.get(rel.target);
+      if (!a || !b) continue;
+
+      if (rel.rule === "axis") {
+        // Align on X axis
+        const mid = (a.x + b.x) / 2;
+        a.x += (mid - a.x) * 0.2;
+        b.x += (mid - b.x) * 0.2;
+      } else if (rel.rule === "offset") {
+        // Align on Z axis
+        const mid = (a.z + b.z) / 2;
+        a.z += (mid - a.z) * 0.2;
+        b.z += (mid - b.z) * 0.2;
+      }
+    }
+
+    // Stack relations: align X/Z for stacked nodes
+    for (const rel of stackEdges) {
+      const a = placements.get(rel.source);
+      const b = placements.get(rel.target);
+      if (!a || !b) continue;
+      // Pull X/Z together
+      a.x += (b.x - a.x) * 0.15;
+      a.z += (b.z - a.z) * 0.15;
+      b.x += (a.x - b.x) * 0.15;
+      b.z += (a.z - b.z) * 0.15;
+    }
+  }
+
+  // Center everything
+  let cx = 0, cz = 0;
+  for (const p of placementArr) { cx += p.x; cz += p.z; }
+  cx /= placementArr.length || 1;
+  cz /= placementArr.length || 1;
+  for (const p of placementArr) { p.x -= cx; p.z -= cz; }
+
+  return placementArr;
+}
+
+function buildMassGraphEnvironment(scene: THREE.Scene, massGraph: SpatialMassGraph) {
+  const [siteW, siteD] = massGraph.global.site.dimensions;
+
+  // Ground
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(200, 200),
+    new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.95, metalness: 0.0 }),
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -0.1;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  // Site boundary
+  const hw = siteW / 2, hd = siteD / 2;
+  const sitePts = [
+    new THREE.Vector3(-hw, 0.02, -hd), new THREE.Vector3(hw, 0.02, -hd),
+    new THREE.Vector3(hw, 0.02, hd), new THREE.Vector3(-hw, 0.02, hd),
+    new THREE.Vector3(-hw, 0.02, -hd),
+  ];
+  scene.add(new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints(sitePts),
+    new THREE.LineBasicMaterial({ color: 0x2a3040, transparent: true, opacity: 0.4 }),
+  ));
+
+  // Grid
+  const grid = new THREE.GridHelper(100, 20, 0x1a1e28, 0x0e1018);
+  grid.position.y = 0.01;
+  scene.add(grid);
+
+  // Context labels
+  const ctx = massGraph.global.site.context;
+  const labelDirs: [string, THREE.Vector3][] = [
+    [ctx.north, new THREE.Vector3(0, 1.5, hd + 8)],
+    [ctx.south, new THREE.Vector3(0, 1.5, -(hd + 8))],
+    [ctx.east, new THREE.Vector3(hw + 8, 1.5, 0)],
+    [ctx.west, new THREE.Vector3(-(hw + 8), 1.5, 0)],
+  ];
+  for (const [label, pos] of labelDirs) {
+    if (!label) continue;
+    const txt = label.length > 15 ? label.slice(0, 15) + "…" : label;
+    const sprite = makeLabel(txt, 0x6a7088);
+    sprite.position.copy(pos);
+    sprite.scale.set(10, 3.5, 1);
+    scene.add(sprite);
+  }
+
+  const nSprite = makeLabel("N", 0x7088cc);
+  nSprite.position.set(0, 2.5, hd + 4);
+  nSprite.scale.set(3, 2, 1);
+  scene.add(nSprite);
+}
+
+function createMassGeometry(primitive: string, w: number, h: number, d: number): THREE.BufferGeometry {
+  switch (primitive) {
+    case "tower":
+      return new THREE.BoxGeometry(w * 0.6, h, d * 0.6);
+    case "plate":
+      return new THREE.BoxGeometry(w * 1.2, h, d * 1.2);
+    case "bar":
+      return new THREE.BoxGeometry(w * 1.5, h, d * 0.5);
+    case "ring": {
+      const outer = Math.max(w, d) * 0.6;
+      const inner = outer * 0.6;
+      const shape = new THREE.Shape();
+      shape.absarc(0, 0, outer, 0, Math.PI * 2, false);
+      const hole = new THREE.Path();
+      hole.absarc(0, 0, inner, 0, Math.PI * 2, true);
+      shape.holes.push(hole);
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: h, bevelEnabled: false });
+      geo.rotateX(-Math.PI / 2);
+      return geo;
+    }
+    case "bridge":
+      return new THREE.BoxGeometry(w * 1.8, h * 0.4, d * 0.4);
+    default: // block
+      return new THREE.BoxGeometry(w, h, d);
+  }
+}
+
+function createMassMaterial(node: MassNode, massIndex?: number): THREE.MeshPhysicalMaterial {
+  const baseColor = massIndex !== undefined ? getMassIdentityColorHex(massIndex) : (MASS_TYPE_COLORS_HEX[node.type] || 0x555555);
+  const skinParams = SKIN_MATERIALS[node.geometry.skin] || SKIN_MATERIALS.concrete;
+  const porosityFactor = POROSITY_FACTOR[node.geometry.porosity] || 1.0;
+
+  const params: THREE.MeshPhysicalMaterialParameters = {
+    color: baseColor,
+    emissive: 0x141c28,
+    emissiveIntensity: 0.08,
+    side: THREE.FrontSide,
+    ...skinParams,
+  };
+
+  if (params.opacity !== undefined) {
+    params.opacity = params.opacity * porosityFactor;
+    params.transparent = params.opacity < 1.0;
+  }
+
+  if (node.type === "void") {
+    params.transparent = true;
+    params.opacity = 0.25;
+    params.wireframe = false;
+    params.side = THREE.DoubleSide;
+  }
+
+  return new THREE.MeshPhysicalMaterial(params);
+}
+
+function buildMassGraphVolumes(
+  ref: SceneState,
+  massGraph: SpatialMassGraph,
+  dispatch: React.Dispatch<import("@/lib/graph-context").GraphAction>,
+) {
+  const placements = solveMassConstraints(massGraph);
+  const massGroup = ref.massGroup;
+
+  // Raycaster for click detection
+  const raycaster = new THREE.Raycaster();
+  const mouse = new THREE.Vector2();
+
+  for (let pi = 0; pi < placements.length; pi++) {
+    const p = placements[pi];
+    const massIndex = massGraph.nodes.findIndex((n) => n.id === p.node.id);
+    const geo = createMassGeometry(p.node.geometry.primitive, p.w, p.h, p.d);
+    const mat = createMassMaterial(p.node, massIndex >= 0 ? massIndex : pi);
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(p.x, p.y + p.h / 2, p.z);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    mesh.userData.nodeId = p.node.id;
+    mesh.userData.massOriginalOpacity = mat.opacity ?? 1.0;
+    massGroup.add(mesh);
+    ref.nodeMeshes.set(p.node.id, mesh);
+    ref.selectables.push(mesh);
+
+    // Void: add wireframe overlay (hidden by default, shown on selection)
+    if (p.node.type === "void") {
+      const wireGeo = new THREE.EdgesGeometry(geo);
+      const wireMat = new THREE.LineBasicMaterial({ color: 0xff4444, transparent: true, opacity: 0.8, linewidth: 2 });
+      const wire = new THREE.LineSegments(wireGeo, wireMat);
+      wire.position.copy(mesh.position);
+      wire.userData.voidWireframe = true;
+      wire.userData.nodeId = p.node.id;
+      wire.visible = false;
+      massGroup.add(wire);
+    }
+
+    // Label
+    const label = makeLabel(p.node.label, 0xcccccc);
+    label.position.set(p.x, p.y + p.h + 2, p.z);
+    label.scale.set(6, 2.5, 1);
+    massGroup.add(label);
+  }
+
+  // Draw relation lines
+  const RELATION_COLORS: Record<string, number> = {
+    stack: 0x5566aa,
+    contact: 0x55aa66,
+    enclosure: 0xffaa66,
+    intersection: 0xff6666,
+    connection: 0x66aaff,
+    alignment: 0x66ffaa,
+  };
+
+  for (const rel of massGraph.relations) {
+    const srcP = placements.find((p) => p.node.id === rel.source);
+    const tgtP = placements.find((p) => p.node.id === rel.target);
+    if (!srcP || !tgtP) continue;
+
+    const pts = [
+      new THREE.Vector3(srcP.x, srcP.y + srcP.h / 2, srcP.z),
+      new THREE.Vector3(tgtP.x, tgtP.y + tgtP.h / 2, tgtP.z),
+    ];
+    const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
+    const lineMat = new THREE.LineBasicMaterial({
+      color: RELATION_COLORS[rel.family] || 0x444444,
+      transparent: true,
+      opacity: rel.strength === "hard" ? 0.6 : 0.3,
+    });
+    if (rel.strength === "soft") {
+      // Dashed line for soft relations
+      const dashedMat = new THREE.LineDashedMaterial({
+        color: RELATION_COLORS[rel.family] || 0x444444,
+        transparent: true,
+        opacity: 0.3,
+        dashSize: 1.5,
+        gapSize: 1,
+      });
+      const line = new THREE.Line(lineGeo, dashedMat);
+      line.computeLineDistances();
+      massGroup.add(line);
+    } else {
+      massGroup.add(new THREE.Line(lineGeo, lineMat));
+    }
+  }
+
+  ref.scene.add(massGroup);
+
+  // Click handler
+  const container = ref.renderer.domElement;
+  const onClick = (event: MouseEvent) => {
+    const rect = container.getBoundingClientRect();
+    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(mouse, ref.camera);
+    const hits = raycaster.intersectObjects(ref.selectables, false);
+    if (hits.length > 0) {
+      const nodeId = findNodeId(hits[0].object);
+      if (nodeId) dispatch({ type: "SELECT_NODE", nodeId });
+    } else {
+      dispatch({ type: "SELECT_NODE", nodeId: null });
+    }
+  };
+  container.addEventListener("click", onClick);
+}
+
+// ============================================================
+// V1: Environment
 // ============================================================
 
 function buildEnvironment(scene: THREE.Scene, graph: VerticalNodeGraph) {
@@ -1480,6 +2095,132 @@ function makeLabel(text: string, color: number): THREE.Sprite {
   tex.minFilter = THREE.LinearFilter;
   return new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
 }
+
+// ============================================================
+// OBJ / STL Export
+// ============================================================
+
+function downloadFile(data: string | Blob, filename: string, mimeType: string) {
+  const blob = data instanceof Blob ? data : new Blob([data], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportOBJ(scene: THREE.Scene, filename: string) {
+  let obj = "# GIM Mass Model Export\n";
+  let vertexOffset = 0;
+
+  scene.traverse((child) => {
+    if ((child as THREE.Mesh).isMesh && child.visible) {
+      const mesh = child as THREE.Mesh;
+      const geometry = mesh.geometry;
+      const position = geometry.getAttribute("position");
+      const index = geometry.getIndex();
+
+      obj += `o ${child.name || "mass"}\n`;
+
+      // Vertices (apply world transform)
+      const worldMatrix = mesh.matrixWorld;
+      const v = new THREE.Vector3();
+      for (let i = 0; i < position.count; i++) {
+        v.set(position.getX(i), position.getY(i), position.getZ(i));
+        v.applyMatrix4(worldMatrix);
+        obj += `v ${v.x.toFixed(4)} ${v.y.toFixed(4)} ${v.z.toFixed(4)}\n`;
+      }
+
+      // Faces
+      if (index) {
+        for (let i = 0; i < index.count; i += 3) {
+          obj += `f ${index.getX(i) + 1 + vertexOffset} ${index.getX(i + 1) + 1 + vertexOffset} ${index.getX(i + 2) + 1 + vertexOffset}\n`;
+        }
+      }
+
+      vertexOffset += position.count;
+    }
+  });
+
+  downloadFile(obj, filename, "text/plain");
+}
+
+function exportSTL(scene: THREE.Scene, filename: string) {
+  let triangleCount = 0;
+  const meshes: { mesh: THREE.Mesh; geometry: THREE.BufferGeometry }[] = [];
+
+  scene.traverse((child) => {
+    if ((child as THREE.Mesh).isMesh && child.visible) {
+      const mesh = child as THREE.Mesh;
+      const geo = mesh.geometry;
+      const idx = geo.getIndex();
+      triangleCount += idx ? idx.count / 3 : geo.getAttribute("position").count / 3;
+      meshes.push({ mesh, geometry: geo });
+    }
+  });
+
+  const bufferLength = 80 + 4 + triangleCount * 50;
+  const buffer = new ArrayBuffer(bufferLength);
+  const view = new DataView(buffer);
+
+  // Header (80 bytes)
+  const header = new TextEncoder().encode("GIM Mass Model STL Export");
+  new Uint8Array(buffer, 0, header.length).set(header);
+
+  // Triangle count
+  view.setUint32(80, triangleCount, true);
+
+  let offset = 84;
+  const v1 = new THREE.Vector3();
+  const v2 = new THREE.Vector3();
+  const v3 = new THREE.Vector3();
+  const normal = new THREE.Vector3();
+
+  for (const { mesh, geometry } of meshes) {
+    const pos = geometry.getAttribute("position");
+    const idx = geometry.getIndex();
+    const count = idx ? idx.count : pos.count;
+
+    for (let i = 0; i < count; i += 3) {
+      const i0 = idx ? idx.getX(i) : i;
+      const i1 = idx ? idx.getX(i + 1) : i + 1;
+      const i2 = idx ? idx.getX(i + 2) : i + 2;
+
+      v1.set(pos.getX(i0), pos.getY(i0), pos.getZ(i0)).applyMatrix4(mesh.matrixWorld);
+      v2.set(pos.getX(i1), pos.getY(i1), pos.getZ(i1)).applyMatrix4(mesh.matrixWorld);
+      v3.set(pos.getX(i2), pos.getY(i2), pos.getZ(i2)).applyMatrix4(mesh.matrixWorld);
+
+      normal.crossVectors(v2.clone().sub(v1), v3.clone().sub(v1)).normalize();
+
+      // Normal
+      view.setFloat32(offset, normal.x, true); offset += 4;
+      view.setFloat32(offset, normal.y, true); offset += 4;
+      view.setFloat32(offset, normal.z, true); offset += 4;
+      // Vertices
+      for (const v of [v1, v2, v3]) {
+        view.setFloat32(offset, v.x, true); offset += 4;
+        view.setFloat32(offset, v.y, true); offset += 4;
+        view.setFloat32(offset, v.z, true); offset += 4;
+      }
+      // Attribute byte count
+      view.setUint16(offset, 0, true); offset += 2;
+    }
+  }
+
+  downloadFile(new Blob([buffer]), filename, "application/octet-stream");
+}
+
+const exportBtnStyle: React.CSSProperties = {
+  background: "rgba(20,20,30,0.8)",
+  border: "1px solid #2a2a4e",
+  borderRadius: 4,
+  color: "#888",
+  fontSize: 9,
+  padding: "3px 8px",
+  cursor: "pointer",
+  fontFamily: "inherit",
+};
 
 const legendStyle: React.CSSProperties = {
   position: "absolute",

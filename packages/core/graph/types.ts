@@ -342,3 +342,247 @@ export interface ConsensusZone {
   votes: number;
   sources: string[];
 }
+
+// ============================================================
+// SpatialMassGraph — Mass-level abstraction (6~12 nodes)
+// Replaces VerticalNodeGraph for architectural mass composition
+// ============================================================
+
+export type MassNodeType = "solid" | "void" | "core" | "connector";
+
+export type MassPrimitive = "block" | "bar" | "plate" | "ring" | "tower" | "bridge";
+
+export type MassScaleCategory = "small" | "medium" | "large" | "extra_large";
+
+export type MassProportion = "compact" | "elongated" | "slender" | "broad";
+
+export type MassSkin = "opaque" | "mixed" | "transparent";
+
+export type MassPorosity = "solid" | "porous" | "open";
+
+export type MassSpanCharacter = "single" | "stacked" | "multi_level";
+
+export interface MassGeometry {
+  primitive: MassPrimitive;
+  scale: {
+    category: MassScaleCategory;
+    hint: {
+      width: number;   // meters
+      depth: number;    // meters
+      height: number;   // meters
+    };
+  };
+  proportion: MassProportion;
+  skin: MassSkin;
+  porosity: MassPorosity;
+  span_character: MassSpanCharacter;
+}
+
+export interface MassNarrative {
+  intent_text: string;
+  architectural_description: string;
+  facade_text: string;
+  architect_influence: Record<string, number>;  // e.g. { "koolhaas": 0.6, "hadid": 0.4 }
+  discussion_trace: string;
+}
+
+export interface MassNode {
+  id: string;
+  type: MassNodeType;
+  label: string;
+  ground_contact: boolean;
+  floor_range: [number, number];
+  floor_zone: FloorZone;
+  geometry: MassGeometry;
+  narrative: MassNarrative;
+  programs: NodeFunction[];
+  mesh_id?: string;
+}
+
+// ---- Mass Relations ----
+
+export type MassRelationFamily =
+  | "stack"
+  | "contact"
+  | "enclosure"
+  | "intersection"
+  | "connection"
+  | "alignment";
+
+export type MassRelationStrength = "hard" | "soft";
+
+export type MassProgramConstraint =
+  | "PROGRAM_ADJACENT"
+  | "PROGRAM_SEPARATE"
+  | "VERTICAL_CONTINUITY";
+
+export interface MassRelation {
+  id: string;
+  source: string;
+  target: string;
+  family: MassRelationFamily;
+  rule: string;       // above | below | floating | adjacent | touching | wraps | inside | penetrates | overlaps | linked | ramped | axis | offset
+  strength: MassRelationStrength;
+  description: string;
+  program_constraint?: MassProgramConstraint;
+  constraint_rationale?: string;
+}
+
+// ---- SpatialMassGraph (top-level) ----
+
+export interface SpatialMassGraph {
+  global: GlobalGraph;
+  nodes: MassNode[];
+  relations: MassRelation[];
+  composition_summary: string;
+  // NEW fields
+  narrative?: {
+    design_concept: string;
+    spatial_strategy: string;
+    key_decisions: string[];
+  };
+  provenance?: {
+    created_by: string;
+    session_id?: string;
+    phase: string;
+    timestamp: string;
+  };
+  resolved_model?: ResolvedMassModel;
+  metadata: {
+    created_at: string;
+    source_forum: string;
+    total_nodes: number;
+    total_relations: number;
+    floor_range: [number, number];
+    version: number;    // 2 for SpatialMassGraph
+  };
+}
+
+// ============================================================
+// Resolved Model — deterministic geometric interpretation
+// ============================================================
+
+export interface ResolvedMassNode {
+  id: string;                    // matches MassNode.id
+  position: [number, number, number]; // world XYZ (meters)
+  dimensions: [number, number, number]; // width, height, depth (meters)
+  rotation: number;              // Y-axis rotation (degrees)
+  color: string;                 // per-mass identity color (hex)
+  primitive: MassPrimitive;
+  opacity: number;               // 0-1
+  visible: boolean;
+}
+
+export interface ResolvedModelRelation {
+  id: string;                    // matches MassRelation.id
+  satisfied: boolean;            // whether the constraint is geometrically satisfied
+  deviation: number;             // 0-1, how far from ideal
+  visual: {
+    from: [number, number, number];
+    to: [number, number, number];
+    style: "solid" | "dashed";
+  };
+}
+
+export interface ResolvedBooleanOperation {
+  hostId: string;                // the solid mass being subtracted from
+  voidId: string;                // the void mass doing the subtracting
+  operation: "subtract";
+  resultFragments: {
+    position: [number, number, number];
+    dimensions: [number, number, number];
+  }[];
+}
+
+export interface ResolvedMassModel {
+  nodes: ResolvedMassNode[];
+  relations: ResolvedModelRelation[];
+  booleans: ResolvedBooleanOperation[];
+  bounds: {
+    min: [number, number, number];
+    max: [number, number, number];
+  };
+  created_at: string;
+}
+
+// ---- Validation ----
+
+export interface MassValidationResult {
+  valid: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+export function validateSpatialMassGraph(graph: SpatialMassGraph): MassValidationResult {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  // Node count check (6~12)
+  if (graph.nodes.length < 6) {
+    errors.push(`노드 ${graph.nodes.length}개 < 최소 6개`);
+  }
+  if (graph.nodes.length > 12) {
+    errors.push(`노드 ${graph.nodes.length}개 > 최대 12개`);
+  }
+
+  // Core node check
+  if (!graph.nodes.some((n) => n.type === "core")) {
+    errors.push("core 타입 노드 없음");
+  }
+
+  // Relation reference integrity
+  const nodeIds = new Set(graph.nodes.map((n) => n.id));
+  for (const rel of graph.relations) {
+    if (!nodeIds.has(rel.source)) {
+      errors.push(`relation ${rel.id}: source "${rel.source}" 존재하지 않음`);
+    }
+    if (!nodeIds.has(rel.target)) {
+      errors.push(`relation ${rel.id}: target "${rel.target}" 존재하지 않음`);
+    }
+  }
+
+  // Cycle detection in stack relations (must be DAG)
+  const stackEdges = graph.relations.filter((r) => r.family === "stack");
+  const adj = new Map<string, string[]>();
+  for (const e of stackEdges) {
+    const src = e.rule === "below" ? e.target : e.source;
+    const tgt = e.rule === "below" ? e.source : e.target;
+    if (!adj.has(src)) adj.set(src, []);
+    adj.get(src)!.push(tgt);
+  }
+  const visited = new Set<string>();
+  const inStack = new Set<string>();
+  function hasCycle(node: string): boolean {
+    if (inStack.has(node)) return true;
+    if (visited.has(node)) return false;
+    visited.add(node);
+    inStack.add(node);
+    for (const next of adj.get(node) || []) {
+      if (hasCycle(next)) return true;
+    }
+    inStack.delete(node);
+    return false;
+  }
+  for (const id of nodeIds) {
+    if (hasCycle(id)) {
+      errors.push("stack 관계에 순환 참조 존재");
+      break;
+    }
+  }
+
+  // Duplicate node id check
+  const seen = new Set<string>();
+  for (const n of graph.nodes) {
+    if (seen.has(n.id)) errors.push(`중복 노드 id: "${n.id}"`);
+    seen.add(n.id);
+  }
+
+  // Programs check — warn if empty
+  for (const n of graph.nodes) {
+    if (n.type === "solid" && n.programs.length === 0) {
+      warnings.push(`노드 "${n.label}" (${n.id}): programs 비어있음`);
+    }
+  }
+
+  return { valid: errors.length === 0, errors, warnings };
+}

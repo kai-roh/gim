@@ -1,7 +1,7 @@
 "use client";
 
 import React, { createContext, useContext, useReducer, useCallback, useRef } from "react";
-import type { ArchitectResponse, DiscussionPhase, VerticalNodeGraph } from "@gim/core";
+import type { ArchitectResponse, DiscussionPhase, VerticalNodeGraph, SpatialMassGraph } from "@gim/core";
 
 // ============================================================
 // State
@@ -211,8 +211,8 @@ function forumReducer(state: ForumState, action: ForumAction): ForumState {
 
           const zoningText = response.proposal?.vertical_zoning
             ?.slice(0, 3)
-            .map((z: any) => `  ${z.zone}: ${z.floors[0]}~${z.floors[1]}F — ${z.primary_function}`)
-            .join("\n") ?? "";
+            ?.map((z: any) => `  ${z.zone}: ${z.floors?.[0] ?? "?"}~${z.floors?.[1] ?? "?"}F — ${z.primary_function || ""}`)
+            ?.join("\n") ?? "";
 
           messages.push({
             id: `hist_arch_${round.round}_${architectId}`,
@@ -264,17 +264,20 @@ interface ForumContextValue {
 
 const ForumContext = createContext<ForumContextValue | null>(null);
 
-const PHASE_ORDER: DiscussionPhase[] = ["proposal", "cross_critique", "convergence"];
+const PHASE_ORDER: DiscussionPhase[] = ["proposal", "cross_critique", "mass_consensus", "convergence"];
 
 interface ForumProviderProps {
   children: React.ReactNode;
   onGraphGenerated?: (graph: VerticalNodeGraph) => void;
+  onMassGraphGenerated?: (graph: SpatialMassGraph) => void;
 }
 
-export function ForumProvider({ children, onGraphGenerated }: ForumProviderProps) {
+export function ForumProvider({ children, onGraphGenerated, onMassGraphGenerated }: ForumProviderProps) {
   const [state, dispatch] = useReducer(forumReducer, initialState);
   const onGraphRef = useRef(onGraphGenerated);
   onGraphRef.current = onGraphGenerated;
+  const onMassGraphRef = useRef(onMassGraphGenerated);
+  onMassGraphRef.current = onMassGraphGenerated;
   const stateRef = useRef(state);
   stateRef.current = state;
 
@@ -355,9 +358,11 @@ export function ForumProvider({ children, onGraphGenerated }: ForumProviderProps
           const r = data.response as ArchitectResponse;
           const zoningText = r.proposal?.vertical_zoning
             ?.slice(0, 5)
-            .map((z: any) => `  ${z.zone}: ${z.floors[0]}~${z.floors[1]}F — ${z.primary_function}`)
-            .join("\n") || "";
-          addMessage("architect", `${r.stance}\n\n${r.reasoning.slice(0, 300)}${r.reasoning.length > 300 ? "..." : ""}${zoningText ? "\n\n" + zoningText : ""}`, {
+            ?.map((z: any) => `  ${z.zone}: ${z.floors?.[0] ?? "?"}~${z.floors?.[1] ?? "?"}F — ${z.primary_function || ""}`)
+            ?.join("\n") || "";
+          const reasoning = r.reasoning || "";
+          const stance = r.stance || "";
+          addMessage("architect", `${stance}\n\n${reasoning.slice(0, 300)}${reasoning.length > 300 ? "..." : ""}${zoningText ? "\n\n" + zoningText : ""}`, {
             architectId: data.architectId,
             phase,
           });
@@ -369,9 +374,16 @@ export function ForumProvider({ children, onGraphGenerated }: ForumProviderProps
 
         eventSource.addEventListener("forum:graph_generated", (e) => {
           const data = JSON.parse(e.data);
-          onGraphRef.current?.(data.graph);
           const g = data.graph;
-          addMessage("graph", `Graph generated: ${g.nodes.length} nodes, ${g.edges.length} edges (F${g.metadata.floor_range[0]}~${g.metadata.floor_range[1]})`);
+          if (data.version === 2 || g.metadata?.version === 2) {
+            // SpatialMassGraph (v2)
+            onMassGraphRef.current?.(g);
+            addMessage("graph", `Mass Graph generated: ${g.nodes.length} masses, ${g.relations.length} relations (F${g.metadata.floor_range[0]}~${g.metadata.floor_range[1]})`);
+          } else {
+            // VerticalNodeGraph (v1)
+            onGraphRef.current?.(g);
+            addMessage("graph", `Graph generated: ${g.nodes.length} nodes, ${g.edges.length} edges (F${g.metadata.floor_range[0]}~${g.metadata.floor_range[1]})`);
+          }
         });
 
         eventSource.addEventListener("forum:saved", (e) => {

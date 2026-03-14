@@ -4,6 +4,7 @@ import {
   buildPanel,
   sessionToForumResult,
   buildGraphFromForumResult,
+  buildSpatialMassGraphFromForum,
 } from "@gim/core";
 import type { DiscussionPhase } from "@gim/core";
 import * as path from "path";
@@ -103,20 +104,55 @@ export async function GET(request: Request) {
           { dataDir: DATA_DIR }
         );
 
-        // Generate graph only after final convergence phase
-        if (phase === "convergence") {
+        // Generate graph after convergence or mass_consensus phase
+        if (phase === "convergence" || phase === "mass_consensus") {
           try {
-            const forumResult = sessionToForumResult(entry.session);
-            const graph = buildGraphFromForumResult(forumResult);
-            send("forum:graph_generated", { graph });
-
             const ts = kstTimestamp();
-            const forumPath = saveForumResult(entry.session, ts);
-            const graphPath = saveGraphOutput(graph, ts);
-            send("forum:saved", {
-              forumPath: forumPath ? path.basename(forumPath) : null,
-              graphPath: graphPath ? path.basename(graphPath) : null,
-            });
+
+            // Try v2 (SpatialMassGraph) first
+            let massGraphGenerated = false;
+            try {
+              const massGraph = buildSpatialMassGraphFromForum(entry.session);
+              send("forum:graph_generated", { graph: massGraph, version: 2 });
+
+              // Save SpatialMassGraph
+              if (!fs.existsSync(GRAPH_OUTPUT_DIR)) fs.mkdirSync(GRAPH_OUTPUT_DIR, { recursive: true });
+              const massData = JSON.stringify(massGraph, null, 2);
+              fs.writeFileSync(path.join(GRAPH_OUTPUT_DIR, `mass_graph_${ts}.json`), massData, "utf-8");
+              fs.writeFileSync(path.join(GRAPH_OUTPUT_DIR, "spatial_mass_graph.json"), massData, "utf-8");
+              massGraphGenerated = true;
+            } catch {
+              // mass_proposal not available — fall through to v1
+            }
+
+            // Also generate v1 (VerticalNodeGraph) for backward compatibility
+            if (phase === "convergence") {
+              try {
+                const forumResult = sessionToForumResult(entry.session);
+                const graph = buildGraphFromForumResult(forumResult);
+                if (!massGraphGenerated) {
+                  send("forum:graph_generated", { graph, version: 1 });
+                }
+                const graphPath = saveGraphOutput(graph, ts);
+                const forumPath = saveForumResult(entry.session, ts);
+                send("forum:saved", {
+                  forumPath: forumPath ? path.basename(forumPath) : null,
+                  graphPath: graphPath ? path.basename(graphPath) : null,
+                });
+              } catch (v1Err) {
+                if (!massGraphGenerated) {
+                  const msg = v1Err instanceof Error ? v1Err.message : "Graph generation failed";
+                  send("forum:graph_error", { error: msg });
+                }
+              }
+            } else {
+              // mass_consensus phase — save forum result
+              const forumPath = saveForumResult(entry.session, ts);
+              send("forum:saved", {
+                forumPath: forumPath ? path.basename(forumPath) : null,
+                graphPath: null,
+              });
+            }
           } catch (graphErr) {
             const msg = graphErr instanceof Error ? graphErr.message : "Graph generation failed";
             send("forum:graph_error", { error: msg });

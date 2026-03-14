@@ -5,7 +5,7 @@ import { useForum, type ArchitectSummary, type ForumMessage } from "@/lib/forum-
 import { useGraph } from "@/lib/graph-context";
 import type { DiscussionPhase } from "@gim/core";
 
-const PHASE_ORDER: DiscussionPhase[] = ["proposal", "cross_critique", "convergence"];
+const PHASE_ORDER: DiscussionPhase[] = ["proposal", "cross_critique", "mass_consensus", "convergence"];
 
 interface SessionSummary {
   id: string;
@@ -18,6 +18,16 @@ interface SessionSummary {
   hasGraph: boolean;
 }
 
+function downloadJSON(data: unknown, filename: string) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function ForumPanel() {
   const { state, dispatch, startSession, runPhase, runAllPhases, addMessage } = useForum();
   const graph = useGraph();
@@ -27,6 +37,14 @@ export function ForumPanel() {
   const [showHistory, setShowHistory] = useState(false);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loadingSessions, setLoadingSessions] = useState(false);
+  const [activeTab, setActiveTab] = useState<"forum" | "results">("forum");
+
+  // Auto-switch to results tab when forum completes
+  useEffect(() => {
+    if (state.status === "all_complete" || state.historicalForumResult) {
+      setActiveTab("results");
+    }
+  }, [state.status, state.historicalForumResult]);
 
   // Load architects on mount
   useEffect(() => {
@@ -319,10 +337,39 @@ export function ForumPanel() {
         </div>
       )}
 
+      {/* Tab bar for Forum / Results (shown when forum is complete) */}
+      {(state.status === "all_complete" || state.historicalForumResult) && (
+        <div style={tabBarStyle}>
+          <button
+            onClick={() => setActiveTab("forum")}
+            style={{
+              ...tabBtnStyle,
+              borderBottom: activeTab === "forum" ? "2px solid #a6f" : "2px solid transparent",
+              color: activeTab === "forum" ? "#fff" : "#666",
+            }}
+          >
+            Forum
+          </button>
+          <button
+            onClick={() => setActiveTab("results")}
+            style={{
+              ...tabBtnStyle,
+              borderBottom: activeTab === "results" ? "2px solid #a6f" : "2px solid transparent",
+              color: activeTab === "results" ? "#fff" : "#666",
+            }}
+          >
+            Results
+          </button>
+        </div>
+      )}
+
       {/* Architect Selection (before session) */}
-      {!state.sessionId && !state.autoRunning && !showHistory && !state.historicalForumResult && (
+      {!state.sessionId && !state.autoRunning && !showHistory && !state.historicalForumResult && state.status === "selecting" && (
         <div style={sectionStyle}>
           <div style={sectionTitleStyle}>Select Architects (2-5)</div>
+          {state.architects.length === 0 && (
+            <div style={{ color: "#555", fontSize: 10, padding: 8 }}>Loading architects...</div>
+          )}
           <div style={architectGridStyle}>
             {state.architects.map((a) => (
               <ArchitectCard
@@ -336,42 +383,90 @@ export function ForumPanel() {
         </div>
       )}
 
-      {/* Chat messages */}
-      <div ref={scrollRef} style={chatAreaStyle}>
-        {/* Welcome message */}
-        {state.messages.length === 0 && !state.sessionId && (
-          <div style={welcomeStyle}>
-            {canStart ? (
-              <>
-                <p>Describe your project to start the forum:</p>
-                <p style={{ color: "#555", fontSize: 10, marginTop: 4 }}>
-                  e.g. "서울 성수동에 Gentle Monster 본사 사옥을 설계해줘. 8층 규모, 저층은 브랜드 경험 공간, 중층은 오피스"
-                </p>
-              </>
-            ) : (
-              <p style={{ color: "#555" }}>Select 2-5 architects above to begin.</p>
+      {/* Results tab */}
+      {activeTab === "results" && (state.status === "all_complete" || state.historicalForumResult) ? (
+        <div ref={scrollRef} style={chatAreaStyle}>
+          <div style={{ padding: "16px 8px" }}>
+            <div style={sectionTitleStyle}>Session Results</div>
+
+            {/* Composition summary from mass graph */}
+            {graph.state.massGraph?.composition_summary && (
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 10, color: "#a6f", fontWeight: 600, marginBottom: 6 }}>Composition Summary</div>
+                <div style={{ fontSize: 10, color: "#aaa", whiteSpace: "pre-wrap", lineHeight: 1.5, background: "#111118", padding: 8, borderRadius: 4, border: "1px solid #1a1a2e" }}>
+                  {typeof graph.state.massGraph.composition_summary === "string"
+                    ? graph.state.massGraph.composition_summary
+                    : JSON.stringify(graph.state.massGraph.composition_summary, null, 2)}
+                </div>
+              </div>
             )}
-          </div>
-        )}
 
-        {/* Message list */}
-        {state.messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
-        ))}
-
-        {/* Streaming indicator */}
-        {state.streamingArchitectId && state.streamingTokens && (
-          <div style={streamingBubbleStyle}>
-            <div style={architectLabelStyle}>
-              {state.streamingArchitectId.replace(/_/g, " ")}
-              <span style={typingStyle}> typing...</span>
+            {/* Download buttons */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 12 }}>
+              {graph.state.massGraph && (
+                <button
+                  onClick={() => downloadJSON(graph.state.massGraph, "spatial_mass_graph.json")}
+                  style={downloadBtnStyle}
+                >
+                  Download Graph
+                </button>
+              )}
+              {state.historicalForumResult && (
+                <button
+                  onClick={() => downloadJSON(state.historicalForumResult, "forum_result.json")}
+                  style={downloadBtnStyle}
+                >
+                  Download Forum Result
+                </button>
+              )}
             </div>
-            <div style={streamingTextStyle}>
-              {state.streamingTokens.slice(-600)}
+
+            {/* Session stats */}
+            <div style={{ marginTop: 16, fontSize: 10, color: "#555" }}>
+              {state.messages.length} messages | {state.phases.length} phases completed
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      ) : (
+        /* Chat messages (Forum tab) */
+        <div ref={scrollRef} style={chatAreaStyle}>
+          {/* Welcome message */}
+          {state.messages.length === 0 && !state.sessionId && (
+            <div style={welcomeStyle}>
+              {canStart ? (
+                <>
+                  <p>Describe your project to start the forum:</p>
+                  <p style={{ color: "#555", fontSize: 10, marginTop: 4 }}>
+                    e.g. "서울 성수동에 Gentle Monster 본사 사옥을 설계해줘. 8층 규모, 저층은 브랜드 경험 공간, 중층은 오피스"
+                  </p>
+                </>
+              ) : (
+                <p style={{ color: "#555" }}>Select 2-5 architects above to begin.</p>
+              )}
+            </div>
+          )}
+
+          {/* Message list */}
+          {state.messages.map((msg) => (
+            <MessageBubble key={msg.id} message={msg} />
+          ))}
+
+          {/* Streaming indicator */}
+          {state.streamingArchitectId && (
+            <div style={streamingBubbleStyle}>
+              <div style={architectLabelStyle}>
+                {state.streamingArchitectId.replace(/_/g, " ")}
+                <span style={typingStyle}> discussing...</span>
+              </div>
+              {state.streamingTokens && !state.streamingTokens.trimStart().startsWith("{") && !state.streamingTokens.trimStart().startsWith("[") && (
+                <div style={streamingTextStyle}>
+                  {state.streamingTokens.slice(-600)}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Error */}
       {state.error && (
@@ -718,4 +813,35 @@ const sendBtnStyle: React.CSSProperties = {
   padding: "6px 10px",
   cursor: "pointer",
   fontFamily: "inherit",
+};
+
+const tabBarStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 0,
+  borderBottom: "1px solid #1a1a2e",
+  flexShrink: 0,
+  background: "#0d0d15",
+};
+
+const tabBtnStyle: React.CSSProperties = {
+  flex: 1,
+  background: "transparent",
+  border: "none",
+  padding: "8px 12px",
+  fontSize: 11,
+  cursor: "pointer",
+  fontFamily: "inherit",
+  transition: "all 0.15s",
+};
+
+const downloadBtnStyle: React.CSSProperties = {
+  background: "#1a2a3e",
+  border: "1px solid #2a3a5e",
+  borderRadius: 4,
+  color: "#88aadd",
+  fontSize: 11,
+  padding: "8px 12px",
+  cursor: "pointer",
+  fontFamily: "inherit",
+  textAlign: "left",
 };

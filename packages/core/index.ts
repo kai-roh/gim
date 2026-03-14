@@ -11,6 +11,7 @@ export {
   sessionToForumResult,
   buildContextPrompt,
   buildPhasePrompt,
+  buildSpatialMassGraphFromForum,
 } from "./forum/forum-engine";
 export type { ForumSessionOptions, StreamCallbacks } from "./forum/forum-engine";
 
@@ -31,6 +32,9 @@ export type {
   DesignProposal,
   VerticalZoneProposal,
   StructuralProposal,
+  MassProposal,
+  MassEntityProposal,
+  MassRelationProposal,
   ProjectContext,
   ForumSession,
   ForumRound,
@@ -59,7 +63,36 @@ export type {
   FloorGeometry,
 } from "./graph/types";
 
-export { NODE_FUNCTION_CATEGORY } from "./graph/types";
+export { NODE_FUNCTION_CATEGORY, validateSpatialMassGraph } from "./graph/types";
+
+// Graph — SpatialMassGraph Types
+export type {
+  MassNode,
+  MassNodeType,
+  MassPrimitive,
+  MassScaleCategory,
+  MassProportion,
+  MassSkin,
+  MassPorosity,
+  MassSpanCharacter,
+  MassGeometry,
+  MassNarrative,
+  MassRelation,
+  MassRelationFamily,
+  MassRelationStrength,
+  MassProgramConstraint,
+  SpatialMassGraph,
+  MassValidationResult,
+} from "./graph/types";
+
+// Graph — Resolved Model
+export { resolveModel, getMassColor } from "./graph/resolved-model";
+export type {
+  ResolvedMassNode,
+  ResolvedModelRelation,
+  ResolvedBooleanOperation,
+  ResolvedMassModel,
+} from "./graph/types";
 
 // Graph — Builder
 export { buildVerticalNodeGraph } from "./graph/builder";
@@ -86,6 +119,17 @@ export {
   getNeighbors,
   toJSON,
   fromJSON,
+  // SpatialMassGraph operations
+  addMassNode,
+  removeMassNode,
+  updateMassNode,
+  addMassRelation,
+  removeMassRelation,
+  getMassNodesByType,
+  getMassNeighbors,
+  getMassRelationsBetween,
+  massGraphToJSON,
+  massGraphFromJSON,
 } from "./graph/operations";
 
 // Graph — Metrics
@@ -100,8 +144,9 @@ export type { GraphMetrics } from "./graph/metrics";
 // Graph — Evaluation (7-dimension)
 export {
   evaluateGraphFull,
+  evaluateMassGraphFull,
 } from "./graph/evaluation";
-export type { EvaluationResult, EvaluationIssue } from "./graph/evaluation";
+export type { EvaluationResult, EvaluationIssue, MassEvaluationResult } from "./graph/evaluation";
 
 // Form — Architect FormDNA
 export {

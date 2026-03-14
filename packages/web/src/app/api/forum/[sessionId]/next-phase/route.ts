@@ -5,6 +5,7 @@ import type { DiscussionPhase } from "@gim/core";
 const PHASE_ORDER: DiscussionPhase[] = [
   "proposal",
   "cross_critique",
+  "mass_consensus",
   "convergence",
 ];
 

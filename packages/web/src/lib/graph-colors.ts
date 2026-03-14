@@ -161,3 +161,60 @@ export const FUNC_ORDER = [
 export function floorLabel(f: number): string {
   return f < 0 ? "B" + Math.abs(f) : f + "F";
 }
+
+// ============================================================
+// SpatialMassGraph colors (v2)
+// ============================================================
+
+export const MASS_TYPE_COLORS: Record<string, string> = {
+  solid: "#4488cc",
+  void: "#cc4444",
+  core: "#888888",
+  connector: "#44cc88",
+};
+
+export const MASS_TYPE_COLORS_HEX: Record<string, number> = {
+  solid: 0x4488cc,
+  void: 0xcc4444,
+  core: 0x888888,
+  connector: 0x44cc88,
+};
+
+export const MASS_RELATION_COLORS: Record<string, string> = {
+  stack: "#5566aa",
+  contact: "#55aa66",
+  enclosure: "#ffaa66",
+  intersection: "#ff6666",
+  connection: "#66aaff",
+  alignment: "#66ffaa",
+};
+
+export const MASS_RELATION_COLORS_HEX: Record<string, number> = {
+  stack: 0x5566aa,
+  contact: 0x55aa66,
+  enclosure: 0xffaa66,
+  intersection: 0xff6666,
+  connection: 0x66aaff,
+  alignment: 0x66ffaa,
+};
+
+// Per-mass identity palette (12 distinct colors)
+export const MASS_IDENTITY_PALETTE = [
+  "#4488cc", "#cc8844", "#44cc88", "#cc4488",
+  "#88cc44", "#8844cc", "#44cccc", "#cc4444",
+  "#88cc88", "#cc8888", "#4444cc", "#cccc44",
+];
+
+export const MASS_IDENTITY_PALETTE_HEX = [
+  0x4488cc, 0xcc8844, 0x44cc88, 0xcc4488,
+  0x88cc44, 0x8844cc, 0x44cccc, 0xcc4444,
+  0x88cc88, 0xcc8888, 0x4444cc, 0xcccc44,
+];
+
+export function getMassIdentityColor(index: number): string {
+  return MASS_IDENTITY_PALETTE[index % MASS_IDENTITY_PALETTE.length];
+}
+
+export function getMassIdentityColorHex(index: number): number {
+  return MASS_IDENTITY_PALETTE_HEX[index % MASS_IDENTITY_PALETTE_HEX.length];
+}
