@@ -155,41 +155,51 @@ async function parseBriefToContext(brief: string): Promise<ProjectContext> {
 }
 
 export async function POST(request: Request) {
-  const body = await request.json();
-  const { panelIds, context, brief } = body as {
-    panelIds: string[];
-    context?: ProjectContext;
-    brief?: string;
-  };
+  try {
+    const body = await request.json();
+    const { panelIds, context, brief } = body as {
+      panelIds: string[];
+      context?: ProjectContext;
+      brief?: string;
+    };
 
-  if (!panelIds || panelIds.length < 2 || panelIds.length > 5) {
-    return NextResponse.json(
-      { error: "panelIds must contain 2-5 architect IDs" },
-      { status: 400 }
-    );
+    if (!panelIds || panelIds.length < 2 || panelIds.length > 5) {
+      return NextResponse.json(
+        { error: "panelIds must contain 2-5 architect IDs" },
+        { status: 400 }
+      );
+    }
+
+    // Build context: explicit context > brief-parsed > fallback
+    let projectContext: ProjectContext;
+    if (context) {
+      projectContext = context;
+    } else if (brief) {
+      try {
+        projectContext = await parseBriefToContext(brief);
+      } catch {
+        // Brief parsing failed (e.g. API key missing) — use fallback
+        projectContext = { ...FALLBACK_CONTEXT, client_vision: brief };
+      }
+    } else {
+      projectContext = FALLBACK_CONTEXT;
+    }
+
+    const session = createForumSession(panelIds, projectContext);
+
+    sessionStore.set(session.project_id, {
+      session,
+      status: "idle",
+      currentPhaseResponses: [],
+    });
+
+    return NextResponse.json({
+      sessionId: session.project_id,
+      panel: panelIds,
+      context: session.context,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Failed to create session";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
-
-  // Build context: explicit context > brief-parsed > fallback
-  let projectContext: ProjectContext;
-  if (context) {
-    projectContext = context;
-  } else if (brief) {
-    projectContext = await parseBriefToContext(brief);
-  } else {
-    projectContext = FALLBACK_CONTEXT;
-  }
-
-  const session = createForumSession(panelIds, projectContext);
-
-  sessionStore.set(session.project_id, {
-    session,
-    status: "idle",
-    currentPhaseResponses: [],
-  });
-
-  return NextResponse.json({
-    sessionId: session.project_id,
-    panel: panelIds,
-    context: session.context,
-  });
 }
