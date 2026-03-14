@@ -10,9 +10,11 @@ const PHASE_ORDER: DiscussionPhase[] = ["proposal", "cross_critique", "convergen
 const PHASE_LABELS: Record<DiscussionPhase, string> = {
   proposal: "발제",
   cross_critique: "교차 비평",
+  mass_consensus: "매스 합의",
   convergence: "수렴",
   expert_review: "전문가 검토",
   finalization: "최종 정리",
+  feedback_opinion: "피드백 반영",
 };
 
 interface SessionSummary {

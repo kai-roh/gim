@@ -183,33 +183,6 @@ export interface DesignProposal {
 }
 
 // ============================================================
-// Mass Proposal Types (SpatialMassGraph transition)
-// ============================================================
-
-export interface MassEntityProposal {
-  label: string;
-  type: "solid" | "void" | "core" | "connector";
-  floor_range: [number, number];
-  programs: string[];
-  description: string;
-  geometry_intent: string;     // e.g. "broad plate, transparent, porous"
-}
-
-export interface MassRelationProposal {
-  source: string;               // label reference
-  target: string;               // label reference
-  family: string;               // stack | contact | enclosure | intersection | connection | alignment
-  rule: string;                 // above | below | adjacent | wraps | ...
-  rationale: string;
-}
-
-export interface MassProposal {
-  entities: MassEntityProposal[];
-  key_relations: MassRelationProposal[];
-  form_concept: string;
-}
-
-// ============================================================
 // Architect Response
 // ============================================================
 
@@ -220,8 +193,6 @@ export interface ArchitectResponse {
   reasoning: string;
   // v1 (legacy): vertical_zoning 기반
   proposal: DesignProposal;
-  // v2: mass 기반 (mass_consensus / convergence에서 사용)
-  mass_proposal?: MassProposal;
   critique?: {
     target_architect_id: string;
     point: string;
