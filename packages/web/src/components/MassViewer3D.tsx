@@ -360,6 +360,9 @@ function buildBuilding(ref: SceneState, graph: VerticalNodeGraph) {
     }
   }
 
+  // Sections for continuous exterior shell (collected per floor)
+  const shellSections: { y: number; outline: [number, number][] }[] = [];
+
   // ---- Core (thin translucent spine) ----
   const coreR = Math.min(baseW, baseD) * 0.04;
   const minY = floorY.get(floors[0]) || 0;
@@ -429,54 +432,18 @@ function buildBuilding(ref: SceneState, graph: VerticalNodeGraph) {
     edgeLine.position.y = y;
     floorGroup.add(edgeLine);
 
-    // ---- Building envelope (outer wall surface per floor) ----
+    // ---- Collect outline for continuous exterior shell ----
     if (floor >= 0) {
-      const facadeH = h - slabThick;
       const wallOutline = hasTerrace
         ? applyTerraceInset(outline, floorDNA.terraceDepth, aboveIdx)
         : outline;
+      shellSections.push({ y, outline: wallOutline });
 
-      // Check for void cuts
-      const hwApprox = fW / 2;
-      const hdApprox = fD / 2;
-      const hasVoidFloor = isInVoidCut(floorDNA, floorRatio, 0, 0, hwApprox, hdApprox);
-
-      // Wall surface (ring of vertical panels — no top/bottom caps)
-      const wallGeo = buildWallGeometry(wallOutline, facadeH);
-
-      // Interior warmth based on program
-      const hasExperience = nodes.some((n) => getFuncCategory(n.function) === "experience");
-      const hasPublic = nodes.some((n) => getFuncCategory(n.function) === "public");
-      const emColor = hasExperience ? 0x3a2010 : hasPublic ? 0x102a3a : 0x181c24;
-
-      // Glass ratio — higher facadeOpacity = more glass, lower = more solid wall
+      // ---- Mullion grid (horizontal band lines per floor) ----
+      const facadeH = h - slabThick;
       const glassRatio = floorDNA.facadeOpacity;
-      const wallOpacity = hasVoidFloor ? 0.15 : (0.55 + glassRatio * 0.4); // 0.55–0.95
-
-      const wallMat = new THREE.MeshPhysicalMaterial({
-        color: floorDNA.facadeColor,
-        transparent: true,
-        opacity: wallOpacity,
-        roughness: floorDNA.facadeRoughness,
-        metalness: Math.min(floorDNA.facadeMetalness + 0.15, 0.85),
-        emissive: emColor,
-        emissiveIntensity: 0.06 + floorDNA.interiorWarmth * 0.08,
-        side: THREE.FrontSide,
-        clearcoat: glassRatio > 0.3 ? 0.35 : 0.05,
-        clearcoatRoughness: 0.15,
-      });
-
-      const wall = new THREE.Mesh(wallGeo, wallMat);
-      wall.position.y = y + slabThick;
-      wall.castShadow = true;
-      wall.receiveShadow = true;
-      wall.userData = { isFacade: true };
-      floorGroup.add(wall);
-
-      // ---- Mullion grid (vertical + horizontal lines on facade) ----
-      const mullionColor = glassRatio > 0.35 ? 0x5a6080 : 0x404858;
-      const mullionOpacity = glassRatio > 0.35 ? 0.45 : 0.3;
-      addMullionGrid(floorGroup, wallOutline, y + slabThick, facadeH, mullionColor, mullionOpacity);
+      const mullionColor = glassRatio > 0.35 ? 0x6a7090 : 0x505868;
+      addMullionGrid(floorGroup, wallOutline, y + slabThick, facadeH, mullionColor, 0.3);
     }
 
     // ---- Pilotis (ground floor columns if applicable) ----
@@ -553,6 +520,17 @@ function buildBuilding(ref: SceneState, graph: VerticalNodeGraph) {
     floorSlabs.set(floor, floorGroup);
   }
 
+  // ---- Continuous exterior shell (single opaque surface) ----
+  if (shellSections.length >= 2) {
+    // Close the top with the last floor's outline at its top Y
+    const lastAbove = aboveGroundFloors[aboveGroundFloors.length - 1];
+    if (lastAbove !== undefined) {
+      const topY = (floorY.get(lastAbove) ?? 0) + (floorH.get(lastAbove) ?? 3.8);
+      shellSections.push({ y: topY, outline: shellSections[shellSections.length - 1].outline });
+    }
+    buildContinuousShell(scene, shellSections, dominantDNA);
+  }
+
   // ---- Terrace / setback visualization ----
   // Terrace floors get a green-tinted slab extension
   for (let fi = 0; fi < floors.length; fi++) {
@@ -589,11 +567,6 @@ function buildBuilding(ref: SceneState, graph: VerticalNodeGraph) {
   const topY = (floorY.get(topFloor) || 0) + (floorH.get(topFloor) || 3);
   addRoofTreatment(scene, dominantDNA, baseW, baseD, topY, totalAbove);
 
-  // ---- Loft surface (smooth/sculptural architects) ----
-  if (dominantDNA.transitionStyle === "smooth" || dominantDNA.transitionStyle === "sculptural") {
-    buildLoftSurface(scene, dominantDNA, baseW, baseD, aboveGroundFloors, floorY, floorH, nodesByFloor);
-  }
-
   // ---- Entrance canopy ----
   const groundY = floorY.get(0) ?? floorY.get(1) ?? 0;
   const groundH = floorH.get(0) ?? floorH.get(1) ?? 5;
@@ -605,6 +578,79 @@ function buildBuilding(ref: SceneState, graph: VerticalNodeGraph) {
   canopy.position.set(0, groundY + groundH * 0.65, -(baseD / 2 + 1.8));
   canopy.castShadow = true;
   scene.add(canopy);
+}
+
+// ============================================================
+// Continuous Exterior Shell — Single Opaque Building Skin
+// ============================================================
+
+/**
+ * Builds a single, continuous, opaque exterior wall surface spanning
+ * the full height of the building. Each floor's outline is used as a
+ * cross-section; connecting them produces a seamless lofted shell.
+ */
+function buildContinuousShell(
+  scene: THREE.Scene,
+  sections: { y: number; outline: [number, number][] }[],
+  dna: ArchitectFormDNA,
+) {
+  if (sections.length < 2) return;
+
+  const targetPts = 40;
+  const normalized = sections.map((s) => ({
+    y: s.y,
+    pts: normalizeOutline(s.outline, targetPts),
+  }));
+
+  const rows = normalized.length;
+  const cols = targetPts;
+  const positions = new Float32Array(rows * cols * 3);
+
+  for (let r = 0; r < rows; r++) {
+    const sec = normalized[r];
+    for (let c = 0; c < cols; c++) {
+      const idx = (r * cols + c) * 3;
+      positions[idx]     = sec.pts[c][0];
+      positions[idx + 1] = sec.y;
+      positions[idx + 2] = sec.pts[c][1];
+    }
+  }
+
+  // Quad-strip indices (closed loop per row)
+  const indices: number[] = [];
+  for (let r = 0; r < rows - 1; r++) {
+    for (let c = 0; c < cols; c++) {
+      const c1 = (c + 1) % cols;
+      const a = r * cols + c;
+      const b = r * cols + c1;
+      const d = (r + 1) * cols + c;
+      const e = (r + 1) * cols + c1;
+      indices.push(a, d, b);
+      indices.push(b, d, e);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+
+  const mat = new THREE.MeshPhysicalMaterial({
+    color: dna.facadeColor,
+    transparent: false,
+    roughness: Math.max(dna.facadeRoughness * 0.7, 0.08),
+    metalness: Math.min(dna.facadeMetalness + 0.1, 0.75),
+    side: THREE.FrontSide,
+    clearcoat: dna.facadeOpacity > 0.4 ? 0.5 : 0.15,
+    clearcoatRoughness: 0.1,
+    emissive: 0x080c14,
+    emissiveIntensity: 0.05,
+  });
+
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  scene.add(mesh);
 }
 
 // ============================================================
