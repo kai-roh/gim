@@ -1,7 +1,6 @@
 import { sessionStore } from "@/lib/session-store";
 import {
   runPhaseStreaming,
-  buildPanel,
   sessionToForumResult,
   buildGraphFromForumResult,
 } from "@gim/core";
@@ -32,12 +31,10 @@ function saveForumResult(session: any, timestamp: string) {
 function saveGraphOutput(graph: any, timestamp: string) {
   try {
     if (!fs.existsSync(GRAPH_OUTPUT_DIR)) fs.mkdirSync(GRAPH_OUTPUT_DIR, { recursive: true });
-    // Save with unique timestamp filename
     const filePath = path.join(GRAPH_OUTPUT_DIR, `graph_${timestamp}.json`);
     const data = JSON.stringify(graph, null, 2);
     fs.writeFileSync(filePath, data, "utf-8");
-    // Also update latest for backward compatibility
-    fs.writeFileSync(path.join(GRAPH_OUTPUT_DIR, "vertical_node_graph.json"), data, "utf-8");
+    fs.writeFileSync(path.join(GRAPH_OUTPUT_DIR, "spatial_mass_graph.json"), data, "utf-8");
     return filePath;
   } catch { return null; }
 }
@@ -75,8 +72,9 @@ export async function GET(request: Request) {
 
       try {
         const previousResponses = entry.currentPhaseResponses.length > 0
-          ? entry.currentPhaseResponses
+          ? [...entry.currentPhaseResponses]
           : undefined;
+        const phaseResponses: { id: string; response: any }[] = [];
 
         await runPhaseStreaming(
           entry.session,
@@ -89,7 +87,7 @@ export async function GET(request: Request) {
               send("forum:token", { architectId, token });
             },
             onArchitectComplete: (architectId, response) => {
-              entry.currentPhaseResponses.push({ id: architectId, response });
+              phaseResponses.push({ id: architectId, response });
               send("forum:architect_complete", { architectId, response });
             },
             onPhaseComplete: (phaseCompleted, responses) => {
@@ -99,6 +97,7 @@ export async function GET(request: Request) {
           previousResponses,
           { dataDir: DATA_DIR }
         );
+        entry.currentPhaseResponses = phaseResponses;
 
         // Generate graph from forum results
         try {

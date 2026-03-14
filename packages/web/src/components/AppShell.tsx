@@ -1,18 +1,132 @@
 "use client";
 
-import React, { useEffect, useCallback } from "react";
+import React, { useEffect, useCallback, useRef, useState } from "react";
 import { GraphProvider, useGraph } from "@/lib/graph-context";
-import { ForumProvider } from "@/lib/forum-context";
-import type { VerticalNodeGraph } from "@gim/core";
+import { ForumProvider, useForum } from "@/lib/forum-context";
+import type { SpatialMassGraph } from "@gim/core";
 import { ForumPanel } from "./ForumPanel";
 import { BuildingFloorView } from "./BuildingFloorView";
 import { MassViewer3D } from "./MassViewer3D";
 import { NodeInspector } from "./NodeInspector";
 import { NodeEditor } from "./NodeEditor";
 import { EvaluationDashboard } from "./EvaluationDashboard";
+import { SpatialGraphPanel } from "./SpatialGraphPanel";
+
+function WorkspacePanels() {
+  const { state, dispatch } = useGraph();
+  const { state: forumState } = useForum();
+  const [leftPanelMode, setLeftPanelMode] = useState<"forum" | "result">("forum");
+  const previousResultReadyRef = useRef(false);
+
+  const hasGraph = !!state.graph;
+  const convergenceComplete =
+    forumState.status === "all_complete" ||
+    forumState.phases.some(
+      (phaseState) =>
+        phaseState.phase === "convergence" && phaseState.responses.length > 0
+    );
+  const resultReady = hasGraph && (convergenceComplete || !forumState.sessionId);
+
+  useEffect(() => {
+    if (!previousResultReadyRef.current && resultReady) {
+      setLeftPanelMode("result");
+    }
+    if (!resultReady) {
+      setLeftPanelMode("forum");
+    }
+    previousResultReadyRef.current = resultReady;
+  }, [resultReady]);
+
+  const showingResult = resultReady && leftPanelMode === "result";
+
+  return (
+    <div style={shellStyle}>
+      <div style={mainAreaStyle}>
+        <div style={leftPanelStyle}>
+          {resultReady && (
+            <div style={leftPanelTabsStyle}>
+              <button
+                type="button"
+                onClick={() => setLeftPanelMode("forum")}
+                style={{
+                  ...leftPanelTabStyle,
+                  ...(leftPanelMode === "forum" ? activeLeftPanelTabStyle : {}),
+                }}
+              >
+                Forum
+              </button>
+              <button
+                type="button"
+                onClick={() => setLeftPanelMode("result")}
+                style={{
+                  ...leftPanelTabStyle,
+                  ...(leftPanelMode === "result" ? activeLeftPanelTabStyle : {}),
+                }}
+              >
+                Results
+              </button>
+            </div>
+          )}
+          <div style={leftPanelContentStyle}>
+            {showingResult ? <BuildingFloorView /> : <ForumPanel />}
+          </div>
+        </div>
+
+        {state.loading ? (
+          <div style={placeholderStyle}>
+            <p style={{ color: "#666" }}>Loading graph data...</p>
+          </div>
+        ) : !hasGraph ? (
+          <div style={placeholderStyle}>
+            <p style={{ color: "#888", fontSize: 13 }}>
+              Run a forum session to generate the spatial mass graph
+            </p>
+            <p style={{ color: "#555", fontSize: 11, marginTop: 8 }}>
+              or run <code style={{ color: "#a6f" }}>npm run graph</code> to
+              load existing data
+            </p>
+          </div>
+        ) : (
+          <>
+            <div style={centerColumnStyle}>
+              <div style={viewer3dPanelStyle}>
+                <MassViewer3D />
+              </div>
+              <div style={inspectorPanelStyle}>
+                <NodeInspector />
+                <NodeEditor />
+              </div>
+            </div>
+
+            <div style={infoPanelStyle}>
+              <div style={editToggleBarStyle}>
+                <button
+                  onClick={() => dispatch({ type: "TOGGLE_EDIT_MODE" })}
+                  style={{
+                    ...editToggleBtnStyle,
+                    background: state.editMode ? "#1a2a3e" : "#1a1a2e",
+                    color: state.editMode ? "#4488cc" : "#555",
+                  }}
+                >
+                  {state.editMode ? "Editing" : "View"}
+                </button>
+              </div>
+              <div style={graphPanelStyle}>
+                <SpatialGraphPanel />
+              </div>
+              <div style={evalPanelStyle}>
+                <EvaluationDashboard />
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function AppContent() {
-  const { loadGraph, state, dispatch, undo, redo } = useGraph();
+  const { loadGraph, dispatch, undo, redo } = useGraph();
 
   useEffect(() => {
     loadGraph();
@@ -39,74 +153,15 @@ function AppContent() {
 
   // Forum → Graph bridge
   const handleGraphGenerated = useCallback(
-    (graph: VerticalNodeGraph) => {
+    (graph: SpatialMassGraph) => {
       dispatch({ type: "LOAD_GRAPH_SUCCESS", graph });
     },
     [dispatch]
   );
 
-  const hasGraph = !!state.graph;
-
   return (
     <ForumProvider onGraphGenerated={handleGraphGenerated}>
-      <div style={shellStyle}>
-        <div style={mainAreaStyle}>
-          {/* W1: Forum Panel (chat-style) */}
-          <div style={forumPanelStyle}>
-            <ForumPanel />
-          </div>
-
-          {/* Graph panels */}
-          {state.loading ? (
-            <div style={placeholderStyle}>
-              <p style={{ color: "#666" }}>Loading graph data...</p>
-            </div>
-          ) : !hasGraph ? (
-            <div style={placeholderStyle}>
-              <p style={{ color: "#888", fontSize: 13 }}>
-                Run a forum session to generate the building graph
-              </p>
-              <p style={{ color: "#555", fontSize: 11, marginTop: 8 }}>
-                or run <code style={{ color: "#a6f" }}>npm run graph</code> to
-                load existing data
-              </p>
-            </div>
-          ) : (
-            <>
-              {/* W2: Building Floor View */}
-              <div style={floorViewPanelStyle}>
-                <BuildingFloorView />
-              </div>
-
-              {/* W3: 3D Viewer */}
-              <div style={viewer3dPanelStyle}>
-                <MassViewer3D />
-              </div>
-
-              {/* Right: Node Inspector + Editor + Evaluation */}
-              <div style={infoPanelStyle}>
-                <div style={editToggleBarStyle}>
-                  <button
-                    onClick={() => dispatch({ type: "TOGGLE_EDIT_MODE" })}
-                    style={{
-                      ...editToggleBtnStyle,
-                      background: state.editMode ? "#1a2a3e" : "#1a1a2e",
-                      color: state.editMode ? "#4488cc" : "#555",
-                    }}
-                  >
-                    {state.editMode ? "Editing" : "View"}
-                  </button>
-                </div>
-                <NodeInspector />
-                <NodeEditor />
-                <div style={evalPanelStyle}>
-                  <EvaluationDashboard />
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
+      <WorkspacePanels />
     </ForumProvider>
   );
 }
@@ -136,14 +191,47 @@ const mainAreaStyle: React.CSSProperties = {
   overflow: "hidden",
 };
 
-const forumPanelStyle: React.CSSProperties = {
-  width: 360,
-  minWidth: 320,
+const leftPanelStyle: React.CSSProperties = {
+  width: 380,
+  minWidth: 340,
   borderRight: "1px solid #1a1a2e",
   display: "flex",
   flexDirection: "column",
   background: "#0d0d15",
   overflow: "hidden",
+};
+
+const leftPanelTabsStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 8,
+  padding: "10px 12px",
+  borderBottom: "1px solid #1a1a2e",
+  background: "#0a0f18",
+  flexShrink: 0,
+};
+
+const leftPanelTabStyle: React.CSSProperties = {
+  border: "1px solid #273247",
+  borderRadius: 999,
+  background: "transparent",
+  color: "#7f90ab",
+  padding: "6px 12px",
+  fontSize: 10,
+  letterSpacing: 0.6,
+  textTransform: "uppercase",
+  cursor: "pointer",
+  fontFamily: "inherit",
+};
+
+const activeLeftPanelTabStyle: React.CSSProperties = {
+  background: "#162235",
+  color: "#dce7ff",
+  borderColor: "#3f5d86",
+};
+
+const leftPanelContentStyle: React.CSSProperties = {
+  flex: 1,
+  minHeight: 0,
 };
 
 const placeholderStyle: React.CSSProperties = {
@@ -156,26 +244,34 @@ const placeholderStyle: React.CSSProperties = {
   fontFamily: "'SF Mono', 'Fira Code', monospace",
 };
 
-const floorViewPanelStyle: React.CSSProperties = {
-  width: 380,
-  minWidth: 320,
-  borderRight: "1px solid #1a1a2e",
+const viewer3dPanelStyle: React.CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  minWidth: 0,
+  position: "relative",
+};
+
+const centerColumnStyle: React.CSSProperties = {
+  flex: 1,
+  minWidth: 0,
   display: "flex",
   flexDirection: "column",
+  minHeight: 0,
+};
+
+const inspectorPanelStyle: React.CSSProperties = {
+  height: 280,
+  minHeight: 220,
+  borderTop: "1px solid #1a1a2e",
   background: "#0d0d15",
+  display: "flex",
+  flexDirection: "column",
   overflow: "hidden",
 };
 
-const viewer3dPanelStyle: React.CSSProperties = {
-  flex: 1,
-  minWidth: 0,
-  position: "relative",
-  borderLeft: "1px solid #1a1a2e",
-};
-
 const infoPanelStyle: React.CSSProperties = {
-  width: 280,
-  minWidth: 280,
+  width: 332,
+  minWidth: 300,
   borderLeft: "1px solid #1a1a2e",
   background: "#0d0d15",
   display: "flex",
@@ -184,7 +280,7 @@ const infoPanelStyle: React.CSSProperties = {
 };
 
 const editToggleBarStyle: React.CSSProperties = {
-  padding: "8px 16px",
+  padding: "8px 12px",
   borderBottom: "1px solid #1a1a2e",
 };
 
@@ -198,7 +294,14 @@ const editToggleBtnStyle: React.CSSProperties = {
 };
 
 const evalPanelStyle: React.CSSProperties = {
+  flex: 1,
   borderTop: "1px solid #1a1a2e",
   overflowY: "auto",
-  maxHeight: "40%",
+  minHeight: 0,
+};
+
+const graphPanelStyle: React.CSSProperties = {
+  height: "52%",
+  minHeight: 340,
+  overflow: "hidden",
 };

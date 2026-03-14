@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import * as path from "path";
 import * as fs from "fs";
 import { buildGraphFromForumResult } from "@gim/core";
+import { withResolvedMassModel } from "@gim/core/graph/resolved-model";
 
 const FORUM_OUTPUT_DIR = path.resolve(process.cwd(), "../../forum_results");
 const GRAPH_OUTPUT_DIR = path.resolve(process.cwd(), "../../graph_output");
@@ -17,7 +18,7 @@ export async function GET(
   if (fs.existsSync(graphFile)) {
     try {
       const raw = fs.readFileSync(graphFile, "utf-8");
-      return NextResponse.json(JSON.parse(raw));
+      return NextResponse.json(withResolvedMassModel(JSON.parse(raw)));
     } catch {}
   }
 
@@ -30,7 +31,7 @@ export async function GET(
   try {
     const raw = fs.readFileSync(forumFile, "utf-8");
     const forumResult = JSON.parse(raw);
-    const graph = buildGraphFromForumResult(forumResult);
+    const graph = withResolvedMassModel(buildGraphFromForumResult(forumResult));
 
     // Save for future loads
     if (!fs.existsSync(GRAPH_OUTPUT_DIR)) fs.mkdirSync(GRAPH_OUTPUT_DIR, { recursive: true });

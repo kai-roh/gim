@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
 import * as fs from "fs";
 import * as path from "path";
 import { evaluateGraphFull } from "@gim/core";
-import type { VerticalNodeGraph } from "@gim/core";
+import type { SpatialMassGraph } from "@gim/core";
+import { withResolvedMassModel } from "@gim/core/graph/resolved-model";
 
 export async function GET() {
-  const graphPath = path.resolve(process.cwd(), "../../graph_output/vertical_node_graph.json");
+  const graphPath = path.resolve(process.cwd(), "../../graph_output/spatial_mass_graph.json");
 
   if (!fs.existsSync(graphPath)) {
     return NextResponse.json(
@@ -14,8 +15,16 @@ export async function GET() {
     );
   }
 
-  const graph: VerticalNodeGraph = JSON.parse(fs.readFileSync(graphPath, "utf-8"));
-  const result = evaluateGraphFull(graph.program, graph);
+  const graph: SpatialMassGraph = withResolvedMassModel(
+    JSON.parse(fs.readFileSync(graphPath, "utf-8"))
+  );
+  const result = evaluateGraphFull(graph);
 
+  return NextResponse.json(result);
+}
+
+export async function POST(request: Request) {
+  const graph = withResolvedMassModel((await request.json()) as SpatialMassGraph);
+  const result = evaluateGraphFull(graph);
   return NextResponse.json(result);
 }

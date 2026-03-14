@@ -13,18 +13,19 @@ export async function POST(
   }
 
   const body = await request.json();
-  const { message } = body as { message: string };
+  const { message, feedback } = body as { message?: string; feedback?: string };
+  const payload = message || feedback;
 
-  if (!message) {
+  if (!payload) {
     return NextResponse.json({ error: "Missing message" }, { status: 400 });
   }
 
   // Inject user feedback as a constraint for the next round
-  entry.session.context.constraints.push(`[Client Feedback] ${message}`);
+  entry.session.context.constraints.push(`[Client Feedback] ${payload}`);
 
   return NextResponse.json({
     sessionId,
-    injected: message,
+    injected: payload,
     totalConstraints: entry.session.context.constraints.length,
   });
 }

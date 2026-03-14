@@ -1,139 +1,77 @@
 // ============================================================
-// CRUD Utilities for Vertical Node Graph
-// All operations are immutable (return new objects)
+// Spatial Mass Graph Operations
 // ============================================================
 
-import type {
-  VerticalNodeGraph,
-  FloorNode,
-  VoxelEdge,
-  FloorZone,
-  NodeFunction,
-} from "./types";
+import type { MassNode, MassRelation, SpatialMassGraph } from "./types";
+import { withResolvedMassModel } from "./resolved-model";
 
-// ============================================================
-// Node Operations
-// ============================================================
+function refreshMetadata(graph: SpatialMassGraph): SpatialMassGraph {
+  return withResolvedMassModel(graph);
+}
 
-export function addNode(graph: VerticalNodeGraph, node: FloorNode): VerticalNodeGraph {
-  return {
+export function addNode(graph: SpatialMassGraph, node: MassNode): SpatialMassGraph {
+  return refreshMetadata({
     ...graph,
     nodes: [...graph.nodes, node],
-    metadata: {
-      ...graph.metadata,
-      total_nodes: graph.metadata.total_nodes + 1,
-    },
-  };
-}
-
-export function removeNode(graph: VerticalNodeGraph, nodeId: string): VerticalNodeGraph {
-  const newNodes = graph.nodes.filter((n) => n.id !== nodeId);
-  const newEdges = graph.edges.filter((e) => e.source !== nodeId && e.target !== nodeId);
-  return {
-    ...graph,
-    nodes: newNodes,
-    edges: newEdges,
-    metadata: {
-      ...graph.metadata,
-      total_nodes: newNodes.length,
-      total_edges: newEdges.length,
-    },
-  };
-}
-
-export function updateNode(
-  graph: VerticalNodeGraph,
-  nodeId: string,
-  updates: Partial<FloorNode>
-): VerticalNodeGraph {
-  return {
-    ...graph,
-    nodes: graph.nodes.map((n) =>
-      n.id === nodeId ? { ...n, ...updates, id: n.id } : n
-    ),
-  };
-}
-
-export function moveNode(
-  graph: VerticalNodeGraph,
-  nodeId: string,
-  newFloorLevel: number,
-  newZone?: FloorZone
-): VerticalNodeGraph {
-  return updateNode(graph, nodeId, {
-    floor_level: newFloorLevel,
-    ...(newZone ? { floor_zone: newZone } : {}),
   });
 }
 
-// ============================================================
-// Edge Operations
-// ============================================================
-
-export function addEdge(graph: VerticalNodeGraph, edge: VoxelEdge): VerticalNodeGraph {
-  return {
+export function removeNode(graph: SpatialMassGraph, nodeId: string): SpatialMassGraph {
+  return refreshMetadata({
     ...graph,
-    edges: [...graph.edges, edge],
-    metadata: {
-      ...graph.metadata,
-      total_edges: graph.metadata.total_edges + 1,
-    },
-  };
+    nodes: graph.nodes.filter((node) => node.id !== nodeId),
+    relations: graph.relations.filter(
+      (relation) => relation.source !== nodeId && relation.target !== nodeId
+    ),
+  });
 }
 
-export function removeEdge(
-  graph: VerticalNodeGraph,
-  source: string,
-  target: string
-): VerticalNodeGraph {
-  const newEdges = graph.edges.filter(
-    (e) => !(e.source === source && e.target === target)
-  );
-  return {
+export function updateNode(
+  graph: SpatialMassGraph,
+  nodeId: string,
+  updates: Partial<MassNode>
+): SpatialMassGraph {
+  return refreshMetadata({
     ...graph,
-    edges: newEdges,
-    metadata: {
-      ...graph.metadata,
-      total_edges: newEdges.length,
-    },
-  };
+    nodes: graph.nodes.map((node) =>
+      node.id === nodeId ? { ...node, ...updates, id: node.id } : node
+    ),
+  });
 }
 
-// ============================================================
-// Query Operations
-// ============================================================
-
-export function getNodesByFloor(graph: VerticalNodeGraph, floor: number): FloorNode[] {
-  return graph.nodes.filter((n) => n.floor_level === floor);
+export function addRelation(
+  graph: SpatialMassGraph,
+  relation: MassRelation
+): SpatialMassGraph {
+  return refreshMetadata({
+    ...graph,
+    relations: [...graph.relations, relation],
+  });
 }
 
-export function getNodesByZone(graph: VerticalNodeGraph, zone: FloorZone): FloorNode[] {
-  return graph.nodes.filter((n) => n.floor_zone === zone);
+export function removeRelation(
+  graph: SpatialMassGraph,
+  relationId: string
+): SpatialMassGraph {
+  return refreshMetadata({
+    ...graph,
+    relations: graph.relations.filter((relation) => relation.id !== relationId),
+  });
 }
 
-export function getNodesByFunction(graph: VerticalNodeGraph, func: NodeFunction): FloorNode[] {
-  return graph.nodes.filter((n) => n.function === func);
-}
-
-export function getNeighbors(graph: VerticalNodeGraph, nodeId: string): FloorNode[] {
+export function getNeighbors(graph: SpatialMassGraph, nodeId: string): MassNode[] {
   const neighborIds = new Set<string>();
-
-  for (const edge of graph.edges) {
-    if (edge.source === nodeId) neighborIds.add(edge.target);
-    if (edge.target === nodeId) neighborIds.add(edge.source);
+  for (const relation of graph.relations) {
+    if (relation.source === nodeId) neighborIds.add(relation.target);
+    if (relation.target === nodeId) neighborIds.add(relation.source);
   }
-
-  return graph.nodes.filter((n) => neighborIds.has(n.id));
+  return graph.nodes.filter((node) => neighborIds.has(node.id));
 }
 
-// ============================================================
-// Serialization
-// ============================================================
-
-export function toJSON(graph: VerticalNodeGraph): string {
+export function toJSON(graph: SpatialMassGraph): string {
   return JSON.stringify(graph, null, 2);
 }
 
-export function fromJSON(json: string): VerticalNodeGraph {
-  return JSON.parse(json) as VerticalNodeGraph;
+export function fromJSON(json: string): SpatialMassGraph {
+  return withResolvedMassModel(JSON.parse(json) as SpatialMassGraph);
 }
