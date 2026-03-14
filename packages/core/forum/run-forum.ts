@@ -303,8 +303,13 @@ async function main() {
   printFinalSummary(convergenceResults);
 
   // ── JSON 출력 ──
-  const outputPath = "forum_result.json";
   const fs = await import("fs");
+  const path = await import("path");
+  const resultsDir = "forum_results";
+  if (!fs.existsSync(resultsDir)) fs.mkdirSync(resultsDir);
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const outputPath = path.join(resultsDir, `${timestamp}.json`);
   const output = {
     project: PROJECT_CONTEXT,
     panel: panelIds,
