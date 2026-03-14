@@ -8,5 +8,15 @@ export interface SessionEntry {
   abortController?: AbortController;
 }
 
-// In-memory session store (MVP — no persistence needed)
-export const sessionStore = new Map<string, SessionEntry>();
+// Use globalThis to persist across Next.js module reloads / route boundaries
+const globalKey = "__gim_session_store__" as const;
+
+function getStore(): Map<string, SessionEntry> {
+  const g = globalThis as any;
+  if (!g[globalKey]) {
+    g[globalKey] = new Map<string, SessionEntry>();
+  }
+  return g[globalKey];
+}
+
+export const sessionStore = getStore();
