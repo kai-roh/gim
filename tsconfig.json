@@ -11,6 +11,6 @@
     "declaration": true,
     "skipLibCheck": true
   },
-  "include": ["packages/**/*.ts"],
-  "exclude": ["node_modules", "dist"]
+  "include": ["packages/core/**/*.ts"],
+  "exclude": ["node_modules", "dist", "packages/web"]
 }

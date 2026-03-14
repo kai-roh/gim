@@ -4,3 +4,9 @@ dist/
 .env.local
 *.log
 forum_results/*.json
+graph_output/*.json
+
+# Next.js
+.next/
+out/
+next-env.d.ts

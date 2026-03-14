@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>GIM - Vertical Node Graph Viewer</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0a0a0f; color: #e0e0e0; font-family: 'SF Mono', 'Fira Code', monospace; overflow: hidden; }
+
+#app { display: flex; height: 100vh; }
+
+/* Left: Building Tower */
+#tower-panel {
+  width: 340px;
+  border-right: 1px solid #1a1a2e;
+  display: flex;
+  flex-direction: column;
+  background: #0d0d15;
+}
+#tower-header {
+  padding: 16px;
+  border-bottom: 1px solid #1a1a2e;
+  font-size: 13px;
+}
+#tower-header h2 { font-size: 15px; color: #fff; margin-bottom: 6px; }
+#tower-meta { color: #666; font-size: 11px; line-height: 1.6; }
+#tower-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+}
+#tower-scroll::-webkit-scrollbar { width: 4px; }
+#tower-scroll::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+
+.floor-row {
+  display: flex;
+  align-items: stretch;
+  height: 14px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.floor-row:hover { background: rgba(255,255,255,0.04); }
+.floor-row.selected { background: rgba(100,140,255,0.12); }
+
+.floor-label {
+  width: 36px;
+  text-align: right;
+  font-size: 9px;
+  color: #555;
+  padding-right: 6px;
+  line-height: 14px;
+  flex-shrink: 0;
+}
+.floor-bar {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 1px 0;
+}
+.node-cell {
+  height: 12px;
+  border-radius: 2px;
+  flex: 1;
+  max-width: 60px;
+  position: relative;
+  transition: opacity 0.15s;
+}
+.node-cell:hover { opacity: 0.8; }
+.node-cell.core { max-width: 16px; flex: 0 0 16px; }
+.node-cell.stairwell { max-width: 10px; flex: 0 0 10px; }
+.node-cell.special { border: 1px solid rgba(255,255,255,0.3); }
+
+.zone-marker {
+  width: 10px;
+  font-size: 8px;
+  text-align: center;
+  line-height: 14px;
+  flex-shrink: 0;
+  color: #444;
+}
+
+/* Center: Graph */
+#graph-panel {
+  flex: 1;
+  position: relative;
+}
+#graph-svg { width: 100%; height: 100%; }
+
+/* Right: Info */
+#info-panel {
+  width: 300px;
+  border-left: 1px solid #1a1a2e;
+  background: #0d0d15;
+  display: flex;
+  flex-direction: column;
+}
+#info-header {
+  padding: 16px;
+  border-bottom: 1px solid #1a1a2e;
+}
+#info-header h3 { font-size: 13px; color: #888; margin-bottom: 4px; }
+#info-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 16px;
+  font-size: 11px;
+  line-height: 1.8;
+}
+#info-content::-webkit-scrollbar { width: 4px; }
+#info-content::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+
+.info-section { margin-bottom: 16px; }
+.info-section h4 { color: #888; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+.info-row { display: flex; justify-content: space-between; padding: 2px 0; }
+.info-key { color: #666; }
+.info-val { color: #ccc; }
+.info-bar { height: 4px; background: #1a1a2e; border-radius: 2px; margin-top: 2px; }
+.info-bar-fill { height: 100%; border-radius: 2px; transition: width 0.3s; }
+
+/* Metrics */
+#metrics-panel {
+  padding: 12px 16px;
+  border-top: 1px solid #1a1a2e;
+  font-size: 10px;
+}
+
+/* Legend */
+#legend {
+  padding: 12px 16px;
+  border-top: 1px solid #1a1a2e;
+  font-size: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+
+/* Tooltip */
+.tooltip {
+  position: fixed;
+  background: #1a1a2e;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 11px;
+  pointer-events: none;
+  z-index: 100;
+  display: none;
+  max-width: 250px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+}
+
+/* Edge filter */
+#edge-filters {
+  padding: 8px 16px;
+  border-bottom: 1px solid #1a1a2e;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.edge-btn {
+  background: #1a1a2e;
+  border: 1px solid #333;
+  color: #888;
+  font-size: 9px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.15s;
+}
+.edge-btn.active { background: #2a2a4e; color: #aaf; border-color: #55a; }
+.edge-btn:hover { border-color: #555; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="tower-panel">
+    <div id="tower-header">
+      <h2 id="site-name">Loading...</h2>
+      <div id="tower-meta"></div>
+    </div>
+    <div id="tower-scroll"></div>
+    <div id="legend"></div>
+  </div>
+  <div id="graph-panel">
+    <div id="edge-filters"></div>
+    <svg id="graph-svg"></svg>
+  </div>
+  <div id="info-panel">
+    <div id="info-header"><h3>Node Inspector</h3></div>
+    <div id="info-content"><span style="color:#555">Click a node to inspect</span></div>
+    <div id="metrics-panel"></div>
+  </div>
+</div>
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+const ZONE_COLORS = {
+  basement:  '#4a3728', podium: '#6b5b3a', low_rise: '#3a6b4a',
+  mid_rise:  '#3a5a8a', sky_lobby: '#8a5a9a', high_rise: '#8a3a3a',
+  mechanical:'#5a5a3a', crown: '#9a7a2a', rooftop: '#6a6a7a',
+};
+const FUNC_COLORS = {
+  elevator_core:'#555', stairwell:'#444', service_shaft:'#3a3a3a',
+  parking:'#5a4a3a', loading_dock:'#4a3a2a',
+  retail:'#d4a844', restaurant:'#c49434', cultural_facility:'#b48424',
+  public_void:'#44b4a4', sky_garden:'#44c464', observation_deck:'#e4c444',
+  sky_lounge:'#d4a444', refuge_area:'#e45444',
+  open_office:'#4488cc', premium_office:'#5498dc', executive_suite:'#64a8ec', coworking:'#3478bc',
+  hotel_room:'#c45464', hotel_suite:'#d46474', hotel_lobby:'#b44454', hotel_amenity:'#a43444',
+  mechanical_room:'#7a7a4a', electrical_room:'#6a6a3a', water_tank:'#5a6a4a',
+  outrigger:'#aa6633', belt_truss:'#996633',
+  conference:'#5a78aa', fitness:'#4a98aa', spa:'#4a88ba',
+  library:'#6a78aa', gallery:'#7a68aa', rooftop_bar:'#ba7a4a', elevator_lobby:'#666',
+};
+const EDGE_COLORS = {
+  STACKED_ON:'#334', ADJACENT_TO:'#343', VERTICAL_CONNECT:'#a6f',
+  SERVED_BY:'#6af', ZONE_BOUNDARY:'#fa6', FACES:'#6fa',
+  STRUCTURAL_TRANSFER:'#f66', PROGRAM_LINK:'#ff6',
+};
+
+let graphData = null;
+let selectedNodeId = null;
+let activeEdgeTypes = new Set(['STACKED_ON','ADJACENT_TO','ZONE_BOUNDARY','STRUCTURAL_TRANSFER']);
+
+// === Helpers ===
+function el(tag, attrs, children) {
+  const e = document.createElement(tag);
+  if (attrs) for (const [k,v] of Object.entries(attrs)) {
+    if (k === 'text') e.textContent = v;
+    else if (k === 'style' && typeof v === 'object') Object.assign(e.style, v);
+    else if (k.startsWith('on')) e.addEventListener(k.slice(2), v);
+    else e.setAttribute(k, v);
+  }
+  if (children) for (const c of children) { if (c) e.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); }
+  return e;
+}
+function clearEl(id) { const e = document.getElementById(id); e.textContent = ''; return e; }
+function floorLabel(f) { return f < 0 ? 'B' + Math.abs(f) : f + 'F'; }
+
+// === Load ===
+async function loadGraph() {
+  try {
+    const resp = await fetch('./vertical_node_graph.json');
+    graphData = await resp.json();
+  } catch (e) {
+    document.getElementById('site-name').textContent = 'Error: use a local server';
+    const meta = clearEl('tower-meta');
+    meta.appendChild(el('div', {text: 'Run: npx serve graph_output'}));
+    meta.appendChild(el('div', {text: 'Then open http://localhost:3000/viewer.html'}));
+    return;
+  }
+  renderAll();
+}
+
+function renderAll() {
+  renderHeader(); renderTower(); renderLegend(); renderEdgeFilters(); renderGraph(); renderMetrics();
+}
+
+// === Header ===
+function renderHeader() {
+  const g = graphData.global;
+  document.getElementById('site-name').textContent = g.site.location;
+  const meta = clearEl('tower-meta');
+  meta.appendChild(el('div', {text: g.site.dimensions[0] + 'm x ' + g.site.dimensions[1] + 'm | FAR ' + g.site.far + '%'}));
+  meta.appendChild(el('div', {text: 'B' + g.basement_floors + ' ~ ' + g.total_floors + 'F | GFA ' + g.program.total_gfa.toLocaleString() + 'm\u00B2'}));
+  meta.appendChild(el('div', {text: 'Nodes: ' + graphData.nodes.length + ' | Edges: ' + graphData.edges.length}));
+}
+
+// === Tower ===
+function renderTower() {
+  const container = clearEl('tower-scroll');
+  const nodesByFloor = new Map();
+  for (const n of graphData.nodes) {
+    if (!nodesByFloor.has(n.floor_level)) nodesByFloor.set(n.floor_level, []);
+    nodesByFloor.get(n.floor_level).push(n);
+  }
+  const floors = Array.from(nodesByFloor.keys()).sort((a,b) => b - a);
+
+  for (const floor of floors) {
+    const nodes = nodesByFloor.get(floor);
+    const zone = nodes[0]?.floor_zone || '?';
+    const row = el('div', {class:'floor-row', 'data-floor': floor, onclick: () => selectFloor(floor)});
+
+    row.appendChild(el('div', {class:'floor-label', text: floorLabel(floor)}));
+    row.appendChild(el('div', {class:'zone-marker', text: zone[0].toUpperCase(), style:{color: ZONE_COLORS[zone]||'#444'}}));
+
+    const bar = el('div', {class:'floor-bar'});
+    const sorted = [...nodes].sort((a,b) => {
+      const o = {elevator_core:0, stairwell:1, service_shaft:2};
+      return (o[a.function]??10) - (o[b.function]??10);
+    });
+    for (const node of sorted) {
+      let cls = 'node-cell';
+      if (node.function === 'elevator_core') cls += ' core';
+      if (node.function === 'stairwell') cls += ' stairwell';
+      if (['outrigger','refuge_area','mechanical_room','belt_truss'].includes(node.function)) cls += ' special';
+      const cell = el('div', {class:cls, title: node.name, 'data-node-id': node.id,
+        style:{background: FUNC_COLORS[node.function] || ZONE_COLORS[zone] || '#333'},
+        onclick: (e) => { e.stopPropagation(); selectNode(node.id); }
+      });
+      bar.appendChild(cell);
+    }
+    row.appendChild(bar);
+    container.appendChild(row);
+  }
+}
+
+// === Legend ===
+function renderLegend() {
+  const legend = clearEl('legend');
+  const funcsSeen = new Set(graphData.nodes.map(n => n.function));
+  funcsSeen.delete('elevator_core'); funcsSeen.delete('stairwell');
+  for (const func of funcsSeen) {
+    const item = el('div', {class:'legend-item'}, [
+      el('div', {class:'legend-swatch', style:{background: FUNC_COLORS[func]||'#555'}}),
+      el('span', {text: func.replace(/_/g,' ')})
+    ]);
+    legend.appendChild(item);
+  }
+}
+
+// === Edge Filters ===
+function renderEdgeFilters() {
+  const container = clearEl('edge-filters');
+  const types = [...new Set(graphData.edges.map(e => e.type))];
+  for (const type of types) {
+    const btn = el('button', {
+      class: 'edge-btn' + (activeEdgeTypes.has(type) ? ' active' : ''),
+      text: type,
+      style: {borderColor: activeEdgeTypes.has(type) ? EDGE_COLORS[type] : '#333'},
+      onclick: () => {
+        if (activeEdgeTypes.has(type)) activeEdgeTypes.delete(type); else activeEdgeTypes.add(type);
+        btn.classList.toggle('active');
+        btn.style.borderColor = activeEdgeTypes.has(type) ? EDGE_COLORS[type] : '#333';
+        renderGraph();
+      }
+    });
+    container.appendChild(btn);
+  }
+}
+
+// === D3 Graph ===
+function renderGraph() {
+  const svg = d3.select('#graph-svg');
+  svg.selectAll('*').remove();
+  const panel = document.getElementById('graph-panel');
+  const W = panel.clientWidth;
+  const H = panel.clientHeight - 30;
+  const g = svg.append('g').attr('transform', 'translate(0,30)');
+
+  const nodesByFloor = new Map();
+  for (const n of graphData.nodes) {
+    if (!nodesByFloor.has(n.floor_level)) nodesByFloor.set(n.floor_level, []);
+    nodesByFloor.get(n.floor_level).push(n);
+  }
+  const floors = Array.from(nodesByFloor.keys()).sort((a,b) => a - b);
+  const minF = floors[0], maxF = floors[floors.length-1];
+  const margin = {top:40, bottom:40, left:60, right:60};
+  const plotW = W - margin.left - margin.right;
+  const plotH = H - margin.top - margin.bottom;
+  const yScale = d3.scaleLinear().domain([minF, maxF]).range([plotH+margin.top, margin.top]);
+
+  const funcOrder = ['elevator_core','stairwell','service_shaft','parking','loading_dock',
+    'retail','restaurant','cultural_facility','public_void','sky_garden','refuge_area',
+    'premium_office','open_office','executive_suite','coworking','elevator_lobby',
+    'hotel_room','hotel_suite','hotel_lobby','hotel_amenity',
+    'sky_lounge','observation_deck','rooftop_bar',
+    'mechanical_room','electrical_room','water_tank','outrigger','belt_truss',
+    'conference','fitness','spa','library','gallery'];
+
+  const nodePositions = new Map();
+  for (const [floor, nodes] of nodesByFloor) {
+    const sorted = [...nodes].sort((a,b) => (funcOrder.indexOf(a.function)??99) - (funcOrder.indexOf(b.function)??99));
+    const count = sorted.length;
+    const spacing = Math.min(plotW / (count+1), 80);
+    const startX = margin.left + (plotW - spacing*(count-1)) / 2;
+    sorted.forEach((node, i) => { nodePositions.set(node.id, {x: startX + i*spacing, y: yScale(floor), node}); });
+  }
+
+  // Zone bands
+  const zoneRanges = [];
+  let curZone = null, zStart = null;
+  for (const f of floors) {
+    const z = nodesByFloor.get(f)[0]?.floor_zone;
+    if (z !== curZone) {
+      if (curZone) zoneRanges.push({zone:curZone, start:zStart, end:floors[floors.indexOf(f)-1]});
+      curZone = z; zStart = f;
+    }
+  }
+  if (curZone) zoneRanges.push({zone:curZone, start:zStart, end:floors[floors.length-1]});
+
+  const zoneBands = g.append('g');
+  zoneBands.selectAll('rect').data(zoneRanges).enter().append('rect')
+    .attr('x', margin.left-30).attr('width', plotW+60)
+    .attr('y', d => yScale(d.end)-4)
+    .attr('height', d => Math.max(yScale(d.start)-yScale(d.end)+8, 2))
+    .attr('fill', d => ZONE_COLORS[d.zone]||'#222').attr('opacity', 0.08).attr('rx', 3);
+  zoneBands.selectAll('text').data(zoneRanges).enter().append('text')
+    .attr('x', W-margin.right+10).attr('y', d => (yScale(d.start)+yScale(d.end))/2)
+    .attr('dominant-baseline','middle').attr('fill', d => ZONE_COLORS[d.zone]||'#555')
+    .attr('font-size', 10).attr('opacity', 0.7).text(d => d.zone.replace(/_/g,' '));
+
+  // Edges
+  const filteredEdges = graphData.edges.filter(e => activeEdgeTypes.has(e.type) && nodePositions.has(e.source) && nodePositions.has(e.target));
+  const maxEdges = 2000;
+  const edgesToDraw = filteredEdges.length > maxEdges
+    ? filteredEdges.filter((_,i) => i % Math.ceil(filteredEdges.length/maxEdges) === 0) : filteredEdges;
+
+  g.append('g').selectAll('line').data(edgesToDraw).enter().append('line')
+    .attr('x1', d => nodePositions.get(d.source)?.x||0).attr('y1', d => nodePositions.get(d.source)?.y||0)
+    .attr('x2', d => nodePositions.get(d.target)?.x||0).attr('y2', d => nodePositions.get(d.target)?.y||0)
+    .attr('stroke', d => EDGE_COLORS[d.type]||'#333')
+    .attr('stroke-width', d => d.type==='ZONE_BOUNDARY'||d.type==='STRUCTURAL_TRANSFER' ? 1.5 : 0.5)
+    .attr('opacity', d => d.type==='STACKED_ON' ? 0.15 : d.type==='ADJACENT_TO' ? 0.2 : 0.5);
+
+  // Nodes
+  g.append('g').selectAll('circle').data(Array.from(nodePositions.values())).enter().append('circle')
+    .attr('cx', d => d.x).attr('cy', d => d.y)
+    .attr('r', d => d.node.function==='elevator_core' ? 3 : d.node.function==='stairwell' ? 2 :
+      ['outrigger','refuge_area'].includes(d.node.function) ? 5 : 4)
+    .attr('fill', d => FUNC_COLORS[d.node.function] || ZONE_COLORS[d.node.floor_zone] || '#555')
+    .attr('stroke', d => selectedNodeId===d.node.id ? '#fff' : 'none').attr('stroke-width', 2)
+    .style('cursor', 'pointer')
+    .on('click', (_,d) => selectNode(d.node.id))
+    .on('mouseenter', (event,d) => {
+      const tip = document.getElementById('tooltip');
+      tip.textContent = d.node.name + ' | ' + d.node.floor_zone +
+        ' | view:' + Math.round(d.node.abstract.view_premium*100) + '% prestige:' + Math.round(d.node.abstract.prestige*100) + '%';
+      tip.style.display = 'block';
+      tip.style.left = (event.clientX+12)+'px'; tip.style.top = (event.clientY-10)+'px';
+    })
+    .on('mouseleave', () => { document.getElementById('tooltip').style.display = 'none'; });
+
+  // Floor axis
+  const axisFloors = floors.filter(f => f%5===0 || f===minF || f===maxF);
+  g.selectAll('.ftick').data(axisFloors).enter().append('text')
+    .attr('x', margin.left-10).attr('y', d => yScale(d))
+    .attr('text-anchor','end').attr('dominant-baseline','middle')
+    .attr('fill','#555').attr('font-size',9).text(d => floorLabel(d));
+
+  // Zoom
+  svg.call(d3.zoom().scaleExtent([0.3,5]).on('zoom', ev => {
+    g.attr('transform', 'translate('+ev.transform.x+','+(ev.transform.y+30)+') scale('+ev.transform.k+')');
+  }));
+}
+
+// === Interactions ===
+function selectFloor(floor) {
+  document.querySelectorAll('.floor-row').forEach(r => {
+    r.classList.toggle('selected', parseInt(r.dataset.floor)===floor);
+  });
+  const floorNodes = graphData.nodes.filter(n => n.floor_level===floor);
+  if (floorNodes.length > 0) renderFloorInfo(floor, floorNodes);
+}
+
+function selectNode(nodeId) {
+  selectedNodeId = nodeId;
+  const node = graphData.nodes.find(n => n.id===nodeId);
+  if (!node) return;
+  selectFloor(node.floor_level);
+  renderNodeInfo(node);
+  highlightNode(nodeId);
+}
+
+function renderFloorInfo(floor, nodes) {
+  const content = clearEl('info-content');
+  const sec = el('div', {class:'info-section'});
+  sec.appendChild(el('h4', {text: 'Floor ' + floorLabel(floor)}));
+  sec.appendChild(makeRow('Zone', nodes[0]?.floor_zone||'?'));
+  sec.appendChild(makeRow('Nodes', String(nodes.length)));
+  content.appendChild(sec);
+
+  const sec2 = el('div', {class:'info-section'});
+  sec2.appendChild(el('h4', {text: 'Functions'}));
+  for (const n of nodes) {
+    const row = el('div', {class:'info-row', style:{cursor:'pointer'}, onclick:()=>selectNode(n.id)});
+    row.appendChild(el('span', {class:'info-key', text: n.function.replace(/_/g,' '), style:{color:FUNC_COLORS[n.function]||'#888'}}));
+    sec2.appendChild(row);
+  }
+  content.appendChild(sec2);
+}
+
+function renderNodeInfo(node) {
+  const content = clearEl('info-content');
+
+  // Basic info
+  const sec1 = el('div', {class:'info-section'});
+  sec1.appendChild(el('h4', {text: node.name}));
+  sec1.appendChild(makeRow('ID', node.id));
+  sec1.appendChild(makeRow('Floor', floorLabel(node.floor_level)));
+  sec1.appendChild(makeRow('Zone', node.floor_zone));
+  sec1.appendChild(makeRow('Function', node.function.replace(/_/g,' ')));
+  content.appendChild(sec1);
+
+  // Abstract properties
+  const sec2 = el('div', {class:'info-section'});
+  sec2.appendChild(el('h4', {text: 'Abstract Properties'}));
+  for (const [key, val] of Object.entries(node.abstract)) {
+    const pct = Math.round(val * 100);
+    const color = val > 0.7 ? '#8f8' : val > 0.4 ? '#ff8' : '#f88';
+    sec2.appendChild(makeRow(key.replace(/_/g,' '), pct + '%'));
+    const bar = el('div', {class:'info-bar'});
+    bar.appendChild(el('div', {class:'info-bar-fill', style:{width:pct+'%', background:color}}));
+    sec2.appendChild(bar);
+  }
+  content.appendChild(sec2);
+
+  // Tags
+  if (node.tags?.length) {
+    const sec3 = el('div', {class:'info-section'});
+    sec3.appendChild(el('h4', {text: 'Tags'}));
+    sec3.appendChild(el('span', {class:'info-val', text: node.tags.join(', ')}));
+    content.appendChild(sec3);
+  }
+
+  // Connections
+  const neighbors = [];
+  for (const e of graphData.edges) {
+    if (e.source === node.id) { const t = graphData.nodes.find(n=>n.id===e.target); if(t) neighbors.push({node:t,edge:e,dir:'out'}); }
+    if (e.target === node.id) { const s = graphData.nodes.find(n=>n.id===e.source); if(s) neighbors.push({node:s,edge:e,dir:'in'}); }
+  }
+  if (neighbors.length > 0) {
+    const sec4 = el('div', {class:'info-section'});
+    sec4.appendChild(el('h4', {text: 'Connections (' + neighbors.length + ')'}));
+    const byType = {};
+    for (const n of neighbors) { if (!byType[n.edge.type]) byType[n.edge.type]=[]; byType[n.edge.type].push(n); }
+    for (const [type, items] of Object.entries(byType)) {
+      sec4.appendChild(el('div', {text: type + ' (' + items.length + ')', style:{color:EDGE_COLORS[type], marginTop:'4px', fontSize:'10px'}}));
+      for (const item of items.slice(0,5)) {
+        const row = el('div', {class:'info-row', style:{cursor:'pointer', paddingLeft:'8px'}, onclick:()=>selectNode(item.node.id)});
+        row.appendChild(el('span', {class:'info-key', text: (item.dir==='out'?'\u2192':'\u2190') + ' ' + item.node.id}));
+        sec4.appendChild(row);
+      }
+      if (items.length > 5) sec4.appendChild(el('div', {text: '...+' + (items.length-5) + ' more', style:{color:'#555', paddingLeft:'8px'}}));
+    }
+    content.appendChild(sec4);
+  }
+}
+
+function makeRow(key, val) {
+  return el('div', {class:'info-row'}, [
+    el('span', {class:'info-key', text:key}),
+    el('span', {class:'info-val', text:val})
+  ]);
+}
+
+function highlightNode(nodeId) {
+  d3.selectAll('#graph-svg circle')
+    .attr('stroke', d => d.node.id===nodeId ? '#fff' : 'none')
+    .attr('r', d => {
+      const base = d.node.function==='elevator_core' ? 3 : d.node.function==='stairwell' ? 2 :
+        ['outrigger','refuge_area'].includes(d.node.function) ? 5 : 4;
+      return d.node.id===nodeId ? base+2 : base;
+    });
+  d3.selectAll('#graph-svg line')
+    .attr('opacity', d => (d.source===nodeId||d.target===nodeId) ? 0.8 : (d.type==='STACKED_ON' ? 0.05 : 0.08))
+    .attr('stroke-width', d => (d.source===nodeId||d.target===nodeId) ? 2 :
+      (d.type==='ZONE_BOUNDARY' ? 1 : 0.3));
+}
+
+// === Metrics ===
+function renderMetrics() {
+  const mp = clearEl('metrics-panel');
+  const data = [
+    ['Total Nodes', graphData.nodes.length],
+    ['Total Edges', graphData.edges.length],
+    ['Zones', new Set(graphData.nodes.map(n=>n.floor_zone)).size],
+    ['Functions', new Set(graphData.nodes.map(n=>n.function)).size],
+    ['Edge Types', new Set(graphData.edges.map(e=>e.type)).size],
+    ['Floor Range', graphData.metadata.floor_range[0] + ' ~ ' + graphData.metadata.floor_range[1]],
+  ];
+  for (const [label, val] of data) {
+    const row = el('div', {style:{display:'flex', justifyContent:'space-between', padding:'3px 0'}});
+    row.appendChild(el('span', {text:label, style:{color:'#666', fontSize:'10px'}}));
+    row.appendChild(el('span', {text:String(val), style:{color:'#8f8', fontWeight:'bold', fontSize:'10px'}}));
+    mp.appendChild(row);
+  }
+}
+
+window.addEventListener('resize', () => { if (graphData) renderGraph(); });
+loadGraph();
+</script>
+</body>
+</html>

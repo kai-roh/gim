@@ -3,17 +3,20 @@ import * as path from "path";
 import * as yaml from "yaml";
 import type { ArchitectProfile } from "./types";
 
-const DATA_DIR = path.resolve(__dirname, "../../../data");
-const ARCHITECTS_DIR = path.join(DATA_DIR, "architects");
-const TEMPLATE_PATH = path.join(DATA_DIR, "templates/architect_system.md");
+const DEFAULT_DATA_DIR = path.resolve(__dirname, "../../../data");
+
+function resolveDataDir(dataDir?: string): string {
+  return dataDir ?? DEFAULT_DATA_DIR;
+}
 
 /**
  * YAML 파일에서 건축가 프로필을 로드한다.
  */
-export function loadArchitectProfile(id: string): ArchitectProfile {
-  const filePath = path.join(ARCHITECTS_DIR, `${id}.yaml`);
+export function loadArchitectProfile(id: string, dataDir?: string): ArchitectProfile {
+  const dir = resolveDataDir(dataDir);
+  const filePath = path.join(dir, "architects", `${id}.yaml`);
   if (!fs.existsSync(filePath)) {
-    throw new Error(`Architect profile not found: ${id}`);
+    throw new Error(`Architect profile not found: ${filePath}`);
   }
   const raw = fs.readFileSync(filePath, "utf-8");
   return yaml.parse(raw) as ArchitectProfile;
@@ -22,9 +25,10 @@ export function loadArchitectProfile(id: string): ArchitectProfile {
 /**
  * 사용 가능한 모든 건축가 프로필 ID 목록을 반환한다.
  */
-export function listArchitectIds(): string[] {
+export function listArchitectIds(dataDir?: string): string[] {
+  const dir = resolveDataDir(dataDir);
   return fs
-    .readdirSync(ARCHITECTS_DIR)
+    .readdirSync(path.join(dir, "architects"))
     .filter((f) => f.endsWith(".yaml"))
     .map((f) => f.replace(".yaml", ""));
 }
@@ -32,15 +36,17 @@ export function listArchitectIds(): string[] {
 /**
  * 모든 건축가 프로필을 로드한다.
  */
-export function loadAllArchitects(): ArchitectProfile[] {
-  return listArchitectIds().map(loadArchitectProfile);
+export function loadAllArchitects(dataDir?: string): ArchitectProfile[] {
+  return listArchitectIds(dataDir).map((id) => loadArchitectProfile(id, dataDir));
 }
 
 /**
  * 건축가 프로필을 시스템 프롬프트 문자열로 변환한다.
  */
-export function buildSystemPrompt(profile: ArchitectProfile): string {
-  let template = fs.readFileSync(TEMPLATE_PATH, "utf-8");
+export function buildSystemPrompt(profile: ArchitectProfile, dataDir?: string): string {
+  const dir = resolveDataDir(dataDir);
+  const templatePath = path.join(dir, "templates/architect_system.md");
+  let template = fs.readFileSync(templatePath, "utf-8");
 
   const categoryLabel =
     profile.category === "supertall_specialist"
@@ -88,11 +94,12 @@ export function buildSystemPrompt(profile: ArchitectProfile): string {
  * 선택된 건축가 패널의 시스템 프롬프트를 일괄 생성한다.
  */
 export function buildPanel(
-  architectIds: string[]
+  architectIds: string[],
+  dataDir?: string
 ): { id: string; systemPrompt: string; profile: ArchitectProfile }[] {
   return architectIds.map((id) => {
-    const profile = loadArchitectProfile(id);
-    const systemPrompt = buildSystemPrompt(profile);
+    const profile = loadArchitectProfile(id, dataDir);
+    const systemPrompt = buildSystemPrompt(profile, dataDir);
     return { id, systemPrompt, profile };
   });
 }

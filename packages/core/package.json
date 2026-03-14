@@ -1,0 +1,11 @@
+{
+  "name": "@gim/core",
+  "version": "1.0.0",
+  "private": true,
+  "main": "index.ts",
+  "types": "index.ts",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.78.0",
+    "yaml": "^2.8.2"
+  }
+}

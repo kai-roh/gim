@@ -1,9 +1,16 @@
 {
   "name": "gim",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "private": true,
+  "description": "Geometry Information Modeling — AI-driven architectural design",
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
+    "dev": "npm run dev --workspace=@gim/web",
+    "build": "npm run build --workspace=@gim/web",
+    "forum": "npx tsx packages/core/forum/run-forum.ts",
+    "graph": "npx tsx packages/core/graph/test-graph.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
