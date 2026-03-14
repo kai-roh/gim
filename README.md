@@ -1,4 +1,4 @@
-# GIM — Geometry based Integrated Modeling
+# GIM — Geometry Information Model
 
 > 초고층 빌딩 기획 컨텍스트를 입력하면, 사용자가 선택한 거장 건축가 AI 패널이 토론을 통해 설계안을 확정하고, 수직 노드 그래프가 Rhino 3D 모델로 실시간 생성되며, 평가 모델의 피드백이 다시 토론장으로 돌아오는 순환 설계 시스템
 
