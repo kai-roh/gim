@@ -58,7 +58,8 @@ export type DiscussionPhase =
   | "cross_critique"
   | "convergence"
   | "expert_review"
-  | "finalization";
+  | "finalization"
+  | "feedback_opinion";
 
 export interface VerticalZoneProposal {
   zone: string;

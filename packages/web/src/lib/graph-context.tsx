@@ -118,7 +118,7 @@ function graphReducer(state: GraphState, action: GraphAction): GraphState {
 
     case "SELECT_NODE": {
       if (action.nodeId === null) {
-        return { ...state, selectedNodeId: null };
+        return { ...state, selectedNodeId: null, selectedFloor: null };
       }
       const node = state.graph?.nodes.find((n) => n.id === action.nodeId);
       return {
@@ -129,7 +129,7 @@ function graphReducer(state: GraphState, action: GraphAction): GraphState {
     }
 
     case "SELECT_FLOOR":
-      return { ...state, selectedFloor: action.floor };
+      return { ...state, selectedFloor: action.floor, selectedNodeId: null };
 
     case "TOGGLE_EDGE_TYPE": {
       const next = new Set(state.activeEdgeTypes);

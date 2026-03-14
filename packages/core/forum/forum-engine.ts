@@ -139,6 +139,32 @@ ${othersText}
 - 여전히 동의하지 않는 부분은 critique에 기록하세요.`;
   }
 
+  if (phase === "feedback_opinion") {
+    const feedbackConstraints = context.constraints.filter((c) =>
+      c.startsWith("[Client Feedback]")
+    );
+    const latestFeedback = feedbackConstraints[feedbackConstraints.length - 1] || "";
+
+    const othersText = otherResponses
+      ? otherResponses
+          .map((o) => `- ${o.id}: ${o.response.stance}`)
+          .join("\n")
+      : "";
+
+    return `${contextPrompt}
+## 클라이언트 최신 피드백
+
+${latestFeedback}
+
+${othersText ? `## 다른 건축가들의 현재 입장\n${othersText}\n` : ""}
+위 피드백에 대해 당신의 간단한 반응을 JSON으로 제시하세요.
+phase는 "feedback_opinion"입니다.
+- stance와 reasoning은 2~3문장으로 간결하게 피드백 반응 작성
+- proposal의 form_concept만 피드백 반영해서 간략히 업데이트
+- key_features, vertical_zoning, structural_system은 기존 방향 유지
+- critique와 compromise는 빈 배열/null로 두세요`;
+  }
+
   if (phase === "expert_review") {
     const othersText = otherResponses!
       .map(
@@ -294,6 +320,7 @@ const PHASE_MAX_TOKENS: Record<string, number> = {
   cross_critique: 2500,
   convergence: 2500,
   expert_review: 2000,
+  feedback_opinion: 1200,
 };
 
 export async function runPhaseStreaming(
@@ -308,9 +335,10 @@ export async function runPhaseStreaming(
   const panel = buildPanel(session.panel, options?.dataDir);
   const maxTokens = PHASE_MAX_TOKENS[phase] ?? 3500;
 
-  // Parallel execution — all architects stream simultaneously
-  // onArchitectStart fires immediately; tokens interleave as they arrive
-  const promises = panel.map(async (a) => {
+  // Sequential execution — one architect at a time so streaming is visible per architect
+  const results: { id: string; response: ArchitectResponse }[] = [];
+
+  for (const a of panel) {
     callbacks.onArchitectStart?.(a.id);
 
     const others = previousResponses?.filter((p) => p.id !== a.id);
@@ -327,10 +355,8 @@ export async function runPhaseStreaming(
     );
 
     callbacks.onArchitectComplete?.(a.id, resp);
-    return { id: a.id, response: resp };
-  });
-
-  const results = await Promise.all(promises);
+    results.push({ id: a.id, response: resp });
+  }
 
   const round: ForumRound = {
     round: session.rounds.length + 1,

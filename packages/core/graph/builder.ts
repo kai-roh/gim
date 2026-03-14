@@ -102,6 +102,7 @@ function buildFloorFunctionMap(
     }
 
     for (const cz of consensusZones) {
+      if (cz.floor === 0) continue; // No 0F — buildings go B1 → 1F
       // Per-floor style: use the top-voted source for this zone, fallback to dominant
       const floorStyle = cz.sources.length > 0 ? cz.sources[0] : dominantArchitect;
       map.set(cz.floor, {
@@ -114,6 +115,7 @@ function buildFloorFunctionMap(
   } else {
     for (const pn of program.nodes) {
       for (let f = pn.floor_range[0]; f <= pn.floor_range[1]; f++) {
+        if (f === 0) continue; // No 0F
         if (!map.has(f)) {
           map.set(f, { zone: pn.target_zone, primaryFunction: pn.program_type, tags: [] });
         }
@@ -122,6 +124,7 @@ function buildFloorFunctionMap(
   }
 
   for (let f = -basementFloors; f <= totalFloors; f++) {
+    if (f === 0) continue; // No 0F — buildings go B1 → 1F
     if (!map.has(f)) {
       const zone = classifyFloorZone(f, totalFloors);
       const func = getDefaultFunctionForZone(zone);

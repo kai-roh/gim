@@ -185,9 +185,11 @@ export function ChatInterface() {
               body: JSON.stringify({ message: trimmed }),
             });
             if (!injectResp.ok) throw new Error("Inject failed");
-            addMessage("system", "Feedback injected. Running 1 convergence round...");
+            addMessage("system", "피드백 접수. 각 건축가 의견 수렴 중...");
+            await forum.runPhase("feedback_opinion");
+            addMessage("system", "의견 수렴 완료. 최종 결론 도출 중...");
             await forum.runPhase("convergence");
-            addMessage("system", "Done. Graph & 3D viewer updated.");
+            addMessage("system", "완료. 그래프 & 3D 뷰어 업데이트됨.");
           } catch {
             addMessage("system", "Failed to process feedback.");
           }

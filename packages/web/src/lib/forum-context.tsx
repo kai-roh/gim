@@ -325,6 +325,7 @@ export function ForumProvider({ children, onGraphGenerated }: ForumProviderProps
         proposal: "발제 (Proposal)",
         cross_critique: "교차 비평 (Cross Critique)",
         convergence: "수렴 (Convergence)",
+        feedback_opinion: "피드백 반영 의견",
       };
       addMessage("phase", `── ${PHASE_NAMES[phase] || phase} ──`, { phase });
 

@@ -90,8 +90,8 @@ export function MassViewer3D() {
 
     // ---- Scene ----
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x1a1e28);
-    scene.fog = new THREE.Fog(0x1a1e28, 80, 280);
+    scene.background = new THREE.Color(0x000000);
+    scene.fog = new THREE.Fog(0x000000, 100, 350);
 
     // ---- Camera ----
     const camera = new THREE.PerspectiveCamera(45, W / H, 0.5, 500);
@@ -156,19 +156,6 @@ export function MassViewer3D() {
     // ---- Build ----
     buildEnvironment(scene, graph);
     buildBuilding(ref, graph);
-
-    // ---- Interaction ----
-    const raycaster = new THREE.Raycaster();
-    const mouse = new THREE.Vector2();
-    renderer.domElement.addEventListener("click", (e) => {
-      const rect = renderer.domElement.getBoundingClientRect();
-      mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-      raycaster.setFromCamera(mouse, camera);
-      const hits = raycaster.intersectObjects(ref.selectables, true);
-      const nodeId = hits.length > 0 ? findNodeId(hits[0].object) : null;
-      dispatch({ type: "SELECT_NODE", nodeId });
-    });
 
     // ---- Animate ----
     let t = 0;
@@ -279,48 +266,7 @@ export function MassViewer3D() {
     }
   }, [selectedFloor, graph]);
 
-  // ---- Node Selection (only active in section mode) ----
-  useEffect(() => {
-    const ref = sceneRef.current;
-    if (!ref || !graph) return;
-    if (selectedFloor === null || selectedFloor === undefined) return;
-
-    // Reset all dots to default
-    ref.nodeMeshes.forEach((mesh) => {
-      const mat = mesh.material as THREE.MeshStandardMaterial;
-      mat.emissiveIntensity = selectedNodeId ? 0.08 : 0.25;
-      mat.opacity = selectedNodeId ? 0.25 : 0.7;
-      mesh.scale.set(1, 1, 1);
-    });
-
-    if (selectedNodeId) {
-      // Selected dot: bright glow + scale up
-      const mesh = ref.nodeMeshes.get(selectedNodeId);
-      if (mesh) {
-        const mat = mesh.material as THREE.MeshStandardMaterial;
-        mat.emissiveIntensity = 0.8;
-        mat.opacity = 1.0;
-        mesh.scale.set(2.2, 2.2, 2.2);
-        ref.controls.target.lerp(mesh.position.clone(), 0.3);
-      }
-
-      // Connected dots: medium glow
-      const connected = new Set<string>();
-      for (const e of graph.edges) {
-        if (e.source === selectedNodeId) connected.add(e.target);
-        if (e.target === selectedNodeId) connected.add(e.source);
-      }
-      connected.forEach((id) => {
-        const m = ref.nodeMeshes.get(id);
-        if (m) {
-          const mat = m.material as THREE.MeshStandardMaterial;
-          mat.emissiveIntensity = 0.4;
-          mat.opacity = 0.8;
-          m.scale.set(1.4, 1.4, 1.4);
-        }
-      });
-    }
-  }, [selectedNodeId, selectedFloor, graph]);
+  // Node selection is handled by the 2D floor plan canvas in NodeInspector.
 
   // Build floor labels for the selector
   const floorLabels = React.useMemo(() => {
@@ -345,11 +291,7 @@ export function MassViewer3D() {
               <div
                 key={floor}
                 onClick={() => {
-                  if (isSelected) {
-                    dispatch({ type: "SELECT_FLOOR", floor: null });
-                  } else {
-                    dispatch({ type: "SELECT_FLOOR", floor });
-                  }
+                  dispatch({ type: "SELECT_FLOOR", floor: isSelected ? null : floor });
                 }}
                 style={{
                   display: "flex",
@@ -439,7 +381,7 @@ function buildEnvironment(scene: THREE.Scene, graph: VerticalNodeGraph) {
   // Ground
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(200, 200),
-    new THREE.MeshStandardMaterial({ color: 0x252830, roughness: 0.92, metalness: 0.02 }),
+    new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.95, metalness: 0.0 }),
   );
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -0.1;
@@ -455,11 +397,11 @@ function buildEnvironment(scene: THREE.Scene, graph: VerticalNodeGraph) {
   ];
   scene.add(new THREE.Line(
     new THREE.BufferGeometry().setFromPoints(sitePts),
-    new THREE.LineBasicMaterial({ color: 0x4a5060, transparent: true, opacity: 0.6 }),
+    new THREE.LineBasicMaterial({ color: 0x2a3040, transparent: true, opacity: 0.4 }),
   ));
 
   // Grid
-  const grid = new THREE.GridHelper(100, 20, 0x303848, 0x222830);
+  const grid = new THREE.GridHelper(100, 20, 0x1a1e28, 0x0e1018);
   grid.position.y = 0.01;
   scene.add(grid);
 
@@ -600,28 +542,18 @@ function buildMassView(
   const massGroup = ref.massGroup;
   const totalAbove = aboveGroundFloors.length;
 
-  // Collect shell sections from above-ground floors
-  const shellSections: { y: number; outline: [number, number][] }[] = [];
+  // Collect shell sections from above-ground floors (with zone for coloring)
+  const shellSections: { y: number; outline: [number, number][]; zone: string }[] = [];
 
   for (const fd of floorDataArr) {
     if (fd.floor < 0) continue;
     const wallOutline = fd.hasTerrace
       ? applyTerraceInset(fd.outline, fd.floorDNA.terraceDepth, fd.aboveIdx)
       : fd.outline;
-    shellSections.push({ y: fd.y, outline: wallOutline });
+    shellSections.push({ y: fd.y, outline: wallOutline, zone: fd.zone });
   }
 
-  // ---- Continuous exterior shell ----
-  if (shellSections.length >= 2) {
-    const lastAbove = aboveGroundFloors[aboveGroundFloors.length - 1];
-    if (lastAbove !== undefined) {
-      const topY = (floorY.get(lastAbove) ?? 0) + (floorH.get(lastAbove) ?? 3.8);
-      shellSections.push({ y: topY, outline: shellSections[shellSections.length - 1].outline });
-    }
-    buildContinuousShellToGroup(massGroup, shellSections, dominantDNA);
-  }
-
-  // ---- Loft surface ----
+  // ---- Loft surface (zone-colored, single layer) ----
   buildLoftSurfaceToGroup(massGroup, dominantDNA, baseW, baseD, aboveGroundFloors, floorY, floorH, nodesByFloor);
 
   // ---- Roof treatment ----
@@ -676,37 +608,6 @@ function buildFloorDetail(
   slab.receiveShadow = true;
   group.add(slab);
 
-  // ---- Node dots ----
-  const dotR = 0.35;
-  const dotGeo = new THREE.SphereGeometry(dotR, 8, 6);
-  const dotY = fd.y + fd.h * 0.5;
-
-  for (const node of fd.nodes) {
-    const cat = getFuncCategory(node.function);
-    const color = FUNC_COLORS_HEX[node.function] || ZONE_COLORS_HEX[fd.zone] || 0x555555;
-    const pos = computeDotPosition(node.position, fd.baseW, fd.baseD, fd.coreR);
-
-    const dotMat = new THREE.MeshStandardMaterial({
-      color,
-      transparent: true,
-      opacity: isSelected ? (cat === "core" ? 0.3 : 0.7) : 0.15,
-      roughness: 0.2,
-      metalness: 0.1,
-      emissive: color,
-      emissiveIntensity: isSelected ? 0.25 : 0.05,
-    });
-
-    const dot = new THREE.Mesh(dotGeo, dotMat);
-    dot.position.set(pos.x, dotY, pos.z);
-    dot.userData = { nodeId: node.id, node };
-    group.add(dot);
-
-    if (isSelected) {
-      ref.nodeMeshes.set(node.id, dot);
-      ref.selectables.push(dot);
-    }
-  }
-
   // ---- Floor label (only for selected floor) ----
   if (isSelected) {
     const label = fd.floor < 0 ? `B${Math.abs(fd.floor)}` : `${fd.floor}F`;
@@ -724,9 +625,19 @@ function buildFloorDetail(
 // Continuous Exterior Shell (to group variant)
 // ============================================================
 
+const ZONE_SHELL_COLORS: Record<string, [number, number, number]> = {
+  basement:  [0.30, 0.26, 0.20],
+  ground:    [0.50, 0.42, 0.30],
+  lower:     [0.32, 0.50, 0.38],
+  middle:    [0.32, 0.42, 0.60],
+  upper:     [0.42, 0.35, 0.60],
+  penthouse: [0.60, 0.42, 0.30],
+  rooftop:   [0.45, 0.52, 0.35],
+};
+
 function buildContinuousShellToGroup(
   group: THREE.Group,
-  sections: { y: number; outline: [number, number][] }[],
+  sections: { y: number; outline: [number, number][]; zone: string }[],
   dna: ArchitectFormDNA,
 ) {
   if (sections.length < 2) return;
@@ -735,19 +646,25 @@ function buildContinuousShellToGroup(
   const normalized = sections.map((s) => ({
     y: s.y,
     pts: normalizeOutline(s.outline, targetPts),
+    zone: s.zone,
   }));
 
   const rows = normalized.length;
   const cols = targetPts;
   const positions = new Float32Array(rows * cols * 3);
+  const colors = new Float32Array(rows * cols * 3);
 
   for (let r = 0; r < rows; r++) {
     const sec = normalized[r];
+    const zoneColor = ZONE_SHELL_COLORS[sec.zone] || ZONE_SHELL_COLORS.middle;
     for (let c = 0; c < cols; c++) {
       const idx = (r * cols + c) * 3;
       positions[idx]     = sec.pts[c][0];
       positions[idx + 1] = sec.y;
       positions[idx + 2] = sec.pts[c][1];
+      colors[idx]     = zoneColor[0];
+      colors[idx + 1] = zoneColor[1];
+      colors[idx + 2] = zoneColor[2];
     }
   }
 
@@ -766,24 +683,26 @@ function buildContinuousShellToGroup(
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   geo.setIndex(indices);
   geo.computeVertexNormals();
 
   const mat = new THREE.MeshPhysicalMaterial({
-    color: dna.facadeColor,
+    vertexColors: true,
     transparent: false,
     roughness: Math.max(dna.facadeRoughness * 0.7, 0.08),
     metalness: Math.min(dna.facadeMetalness + 0.1, 0.75),
     side: THREE.FrontSide,
     clearcoat: dna.facadeOpacity > 0.4 ? 0.5 : 0.15,
     clearcoatRoughness: 0.1,
-    emissive: 0x080c14,
-    emissiveIntensity: 0.05,
+    emissive: 0x141c28,
+    emissiveIntensity: 0.15,
   });
 
   const mesh = new THREE.Mesh(geo, mat);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
+  mesh.userData.massOriginalOpacity = 1.0;
   group.add(mesh);
 }
 
@@ -809,6 +728,7 @@ function buildLoftSurfaceToGroup(
   interface CrossSection {
     y: number;
     outline: [number, number][];
+    zone: string;
   }
 
   const sections: CrossSection[] = [];
@@ -824,9 +744,10 @@ function buildLoftSurfaceToGroup(
     const groundScale = floor <= 1 ? floorDNA.groundExpansion : 1;
 
     const outline = generateFloorOutline(floorDNA, baseW * groundScale, baseD * groundScale, fi, totalAbove);
+    const zone = nodes[0]?.floor_zone || "middle";
 
-    sections.push({ y, outline: normalizeOutline(outline, targetPts) });
-    sections.push({ y: y + h, outline: normalizeOutline(outline, targetPts) });
+    sections.push({ y, outline: normalizeOutline(outline, targetPts), zone });
+    sections.push({ y: y + h, outline: normalizeOutline(outline, targetPts), zone });
   }
 
   if (sections.length < 2) return;
@@ -855,7 +776,7 @@ function buildLoftSurfaceToGroup(
         interpOutline.push([x, z]);
       }
 
-      allSections.push({ y: interpY, outline: interpOutline });
+      allSections.push({ y: interpY, outline: interpOutline, zone: s1.zone });
     }
   }
   allSections.push(sections[sections.length - 1]);
@@ -864,14 +785,19 @@ function buildLoftSurfaceToGroup(
   const cols = targetPts;
   const vertexCount = rows * cols;
   const positions = new Float32Array(vertexCount * 3);
+  const colors = new Float32Array(vertexCount * 3);
 
   for (let r = 0; r < rows; r++) {
     const sec = allSections[r];
+    const zoneColor = ZONE_SHELL_COLORS[sec.zone] || ZONE_SHELL_COLORS.middle;
     for (let c = 0; c < cols; c++) {
       const idx = (r * cols + c) * 3;
       positions[idx] = sec.outline[c][0];
       positions[idx + 1] = sec.y;
       positions[idx + 2] = sec.outline[c][1];
+      colors[idx]     = zoneColor[0];
+      colors[idx + 1] = zoneColor[1];
+      colors[idx + 2] = zoneColor[2];
     }
   }
 
@@ -890,25 +816,26 @@ function buildLoftSurfaceToGroup(
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   geo.setIndex(indices);
   geo.computeVertexNormals();
 
   const mat = new THREE.MeshPhysicalMaterial({
-    color: dna.facadeColor,
-    transparent: true,
-    opacity: 0.55 + dna.facadeOpacity * 0.35,
+    vertexColors: true,
+    transparent: false,
     roughness: dna.facadeRoughness * 0.8,
     metalness: Math.min(dna.facadeMetalness + 0.15, 0.8),
     side: THREE.DoubleSide,
     clearcoat: 0.3,
     clearcoatRoughness: 0.15,
-    emissive: 0x1a2030,
-    emissiveIntensity: 0.04,
+    emissive: 0x141c28,
+    emissiveIntensity: 0.12,
   });
 
   const mesh = new THREE.Mesh(geo, mat);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
+  mesh.userData.massOriginalOpacity = 1.0;
   group.add(mesh);
 
   // Wireframe overlay
@@ -916,7 +843,7 @@ function buildLoftSurfaceToGroup(
   const wireMat = new THREE.LineBasicMaterial({
     color: 0x506080,
     transparent: true,
-    opacity: 0.15,
+    opacity: 0.10,
   });
   const wireframe = new THREE.LineSegments(wireGeo, wireMat);
   group.add(wireframe);
@@ -1055,8 +982,8 @@ function buildContinuousShell(
     side: THREE.FrontSide,
     clearcoat: dna.facadeOpacity > 0.4 ? 0.5 : 0.15,
     clearcoatRoughness: 0.1,
-    emissive: 0x080c14,
-    emissiveIntensity: 0.05,
+    emissive: 0x141c28,
+    emissiveIntensity: 0.15,
   });
 
   const mesh = new THREE.Mesh(geo, mat);
@@ -1171,14 +1098,14 @@ function buildLoftSurface(
   const mat = new THREE.MeshPhysicalMaterial({
     color: dna.facadeColor,
     transparent: true,
-    opacity: 0.55 + dna.facadeOpacity * 0.35,
+    opacity: 0.80 + dna.facadeOpacity * 0.20,
     roughness: dna.facadeRoughness * 0.8,
     metalness: Math.min(dna.facadeMetalness + 0.15, 0.8),
     side: THREE.DoubleSide,
     clearcoat: 0.3,
     clearcoatRoughness: 0.15,
     emissive: 0x1a2030,
-    emissiveIntensity: 0.04,
+    emissiveIntensity: 0.08,
   });
 
   const mesh = new THREE.Mesh(geo, mat);
@@ -1190,7 +1117,7 @@ function buildLoftSurface(
   const wireMat = new THREE.LineBasicMaterial({
     color: 0x506080,
     transparent: true,
-    opacity: 0.15,
+    opacity: 0.12,
   });
   const wireframe = new THREE.LineSegments(wireGeo, wireMat);
   scene.add(wireframe);
