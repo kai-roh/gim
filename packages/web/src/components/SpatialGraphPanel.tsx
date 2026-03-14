@@ -1,346 +1,336 @@
 "use client";
 
-import React, { useRef, useEffect, useCallback, useMemo } from "react";
-import * as d3 from "d3";
+import React, { useCallback, useMemo, useState } from "react";
 import { useGraph } from "@/lib/graph-context";
-import { MASS_TYPE_COLORS, MASS_RELATION_COLORS, getMassIdentityColor } from "@/lib/graph-colors";
+import { HIERARCHY_COLORS, RELATION_COLORS, massColor } from "@/lib/graph-colors";
 
-// ============================================================
-// Style constants
-// ============================================================
+type Point = { x: number; y: number };
+
+function layoutNodes(nodeIds: string[], radius: number, center: Point): Map<string, Point> {
+  const positions = new Map<string, Point>();
+  const count = Math.max(nodeIds.length, 1);
+  nodeIds.forEach((nodeId, index) => {
+    const angle = (-Math.PI / 2) + (index / count) * Math.PI * 2;
+    positions.set(nodeId, {
+      x: center.x + Math.cos(angle) * radius,
+      y: center.y + Math.sin(angle) * radius,
+    });
+  });
+  return positions;
+}
+
+export function SpatialGraphPanel() {
+  const { state, dispatch } = useGraph();
+  const { graph, selectedNodeId, activeRelationFamilies } = state;
+  const [search, setSearch] = useState("");
+  const [zoom, setZoom] = useState(1);
+
+  const viewModel = useMemo(() => {
+    if (!graph) return null;
+
+    const hierarchyOrder = ["primary", "secondary", "tertiary"] as const;
+    const positions = new Map<string, Point>();
+    const center = { x: 210, y: 180 };
+
+    hierarchyOrder.forEach((hierarchy, level) => {
+      const ids = graph.nodes
+        .filter((node) => node.hierarchy === hierarchy)
+        .map((node) => node.id)
+        .sort();
+      const radius = 42 + level * 62;
+      const ringPositions = layoutNodes(ids, radius, center);
+      ringPositions.forEach((point, nodeId) => positions.set(nodeId, point));
+    });
+
+    const visibleRelations = graph.relations.filter(
+      (relation) =>
+        !relation.id.includes("__inverse") && activeRelationFamilies.has(relation.family)
+    );
+
+    return { positions, visibleRelations };
+  }, [graph, activeRelationFamilies]);
+
+  const connectedIds = useMemo(() => {
+    if (!selectedNodeId || !viewModel) return new Set<string>();
+    const ids = new Set<string>();
+    viewModel.visibleRelations.forEach((relation) => {
+      if (relation.source === selectedNodeId) ids.add(relation.target);
+      if (relation.target === selectedNodeId) ids.add(relation.source);
+    });
+    return ids;
+  }, [selectedNodeId, viewModel]);
+
+  const handleSearch = useCallback(() => {
+    if (!graph) return;
+    const query = search.trim().toLowerCase();
+    if (!query) {
+      dispatch({ type: "SELECT_NODE", nodeId: null });
+      return;
+    }
+
+    const match = graph.nodes.find(
+      (node) =>
+        node.name.toLowerCase().includes(query) ||
+        node.id.toLowerCase().includes(query) ||
+        node.spatial_role.toLowerCase().includes(query)
+    );
+    if (match) {
+      dispatch({ type: "SELECT_NODE", nodeId: match.id });
+    }
+  }, [dispatch, graph, search]);
+
+  const adjustZoom = useCallback((delta: number) => {
+    setZoom((value) => Math.min(2.4, Math.max(0.65, value + delta)));
+  }, []);
+
+  if (!graph || !viewModel) return null;
+
+  return (
+    <div style={containerStyle}>
+      <div style={headerStyle}>
+        <div>
+          <div style={eyebrowStyle}>SpatialMassGraph</div>
+          <div style={titleStyle}>Node-Link View</div>
+        </div>
+        <div style={legendStyle}>
+          {["primary", "secondary", "tertiary"].map((hierarchy) => (
+            <div key={hierarchy} style={legendItemStyle}>
+              <span
+                style={{
+                  ...legendDotStyle,
+                  background: HIERARCHY_COLORS[hierarchy] || "#9fb0c6",
+                }}
+              />
+              <span>{hierarchy}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={controlBarStyle}>
+        <form
+          style={searchWrapStyle}
+          onSubmit={(event) => {
+            event.preventDefault();
+            handleSearch();
+          }}
+        >
+          <input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search node"
+            style={searchInputStyle}
+          />
+          <button type="submit" style={controlButtonStyle}>
+            Find
+          </button>
+        </form>
+        <div style={zoomControlsStyle}>
+          <button type="button" onClick={() => adjustZoom(-0.15)} style={controlButtonStyle}>
+            -
+          </button>
+          <button type="button" onClick={() => setZoom(1)} style={controlButtonStyle}>
+            Reset
+          </button>
+          <button type="button" onClick={() => adjustZoom(0.15)} style={controlButtonStyle}>
+            +
+          </button>
+        </div>
+      </div>
+
+      <svg
+        viewBox="0 0 420 360"
+        style={svgStyle}
+        onWheel={(event) => {
+          event.preventDefault();
+          adjustZoom(event.deltaY > 0 ? -0.08 : 0.08);
+        }}
+      >
+        <g transform={`translate(210 180) scale(${zoom}) translate(-210 -180)`}>
+          {[42, 104, 166].map((radius) => (
+            <circle
+              key={radius}
+              cx={210}
+              cy={180}
+              r={radius}
+              fill="none"
+              stroke="#182131"
+              strokeWidth={1}
+              strokeDasharray="4 6"
+            />
+          ))}
+
+          {viewModel.visibleRelations.map((relation) => {
+            const source = viewModel.positions.get(relation.source);
+            const target = viewModel.positions.get(relation.target);
+            if (!source || !target) return null;
+            const touchesSelected =
+              !!selectedNodeId &&
+              (relation.source === selectedNodeId || relation.target === selectedNodeId);
+            const touchesConnected =
+              !!selectedNodeId &&
+              (connectedIds.has(relation.source) || connectedIds.has(relation.target));
+            return (
+              <line
+                key={relation.id}
+                x1={source.x}
+                y1={source.y}
+                x2={target.x}
+                y2={target.y}
+                stroke={RELATION_COLORS[relation.family] || "#42526a"}
+                strokeWidth={touchesSelected ? 2.4 : touchesConnected ? 1.8 : 1.3}
+                opacity={
+                  selectedNodeId
+                    ? touchesSelected
+                      ? 0.95
+                      : touchesConnected
+                        ? 0.5
+                        : 0.14
+                    : 0.58
+                }
+              />
+            );
+          })}
+
+          {graph.nodes.map((node) => {
+            const point = viewModel.positions.get(node.id);
+            if (!point) return null;
+            const selected = node.id === selectedNodeId;
+            const connected = connectedIds.has(node.id);
+            const opacity = selectedNodeId ? (selected ? 1 : connected ? 0.74 : 0.22) : 0.96;
+            return (
+              <g
+                key={node.id}
+                transform={`translate(${point.x},${point.y})`}
+                style={{ cursor: "pointer" }}
+                onClick={() => dispatch({ type: "SELECT_NODE", nodeId: node.id })}
+              >
+                <circle
+                  r={selected ? 14 : connected ? 12 : 11}
+                  fill={massColor(node.id)}
+                  stroke={selected ? "#f3f7ff" : connected ? "#c8d6ef" : "#0f1622"}
+                  strokeWidth={selected ? 2.5 : connected ? 2 : 1.5}
+                  opacity={opacity}
+                />
+                <text
+                  x={0}
+                  y={selected ? 24 : 21}
+                  textAnchor="middle"
+                  fill={selected ? "#f3f7ff" : connected ? "#c8d6ef" : "#9fb0c6"}
+                  opacity={opacity}
+                  fontSize="10"
+                >
+                  {node.name.length > 16 ? `${node.name.slice(0, 16)}…` : node.name}
+                </text>
+              </g>
+            );
+          })}
+        </g>
+      </svg>
+    </div>
+  );
+}
 
 const containerStyle: React.CSSProperties = {
-  width: "100%",
-  height: "100%",
   display: "flex",
   flexDirection: "column",
+  minHeight: 0,
+  height: "100%",
   background: "#0d0d15",
 };
 
 const headerStyle: React.CSSProperties = {
-  padding: "8px 12px",
+  padding: "14px 16px 10px",
   borderBottom: "1px solid #1a1a2e",
-  fontSize: 10,
-  color: "#666",
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 12,
+  alignItems: "flex-start",
 };
 
-// ============================================================
-// Force simulation config
-// ============================================================
+const eyebrowStyle: React.CSSProperties = {
+  color: "#667085",
+  fontSize: 9,
+  textTransform: "uppercase",
+  letterSpacing: 1,
+  marginBottom: 4,
+};
 
-const LINK_DISTANCE = 60;
-const CHARGE_STRENGTH = -120;
-const COLLIDE_RADIUS = 20;
+const titleStyle: React.CSSProperties = {
+  color: "#e8eefc",
+  fontSize: 13,
+};
 
-function getNodeRadius(type: string): number {
-  if (type === "solid") return 12;
-  if (type === "core") return 8;
-  return 10;
-}
+const legendStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 8,
+  flexWrap: "wrap",
+  justifyContent: "flex-end",
+  fontSize: 9,
+  color: "#7f90ab",
+};
 
-function getEdgeWidth(strength: string): number {
-  return strength === "hard" ? 1.5 : 1;
-}
+const legendItemStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 4,
+};
 
-function truncateLabel(label: string, max = 10): string {
-  return label.length > max ? label.slice(0, max) + "\u2026" : label;
-}
+const legendDotStyle: React.CSSProperties = {
+  width: 8,
+  height: 8,
+  borderRadius: 999,
+};
 
-// ============================================================
-// Types for D3 simulation
-// ============================================================
+const svgStyle: React.CSSProperties = {
+  width: "100%",
+  height: "100%",
+  minHeight: 320,
+  background: "radial-gradient(circle at 50% 50%, rgba(30,43,62,0.32), rgba(10,10,15,0.9))",
+};
 
-interface SimNode extends d3.SimulationNodeDatum {
-  id: string;
-  type: string;
-  label: string;
-  massIndex: number;
-}
+const controlBarStyle: React.CSSProperties = {
+  padding: "10px 16px",
+  borderBottom: "1px solid #1a1a2e",
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 10,
+  alignItems: "center",
+  flexWrap: "wrap",
+};
 
-interface SimLink extends d3.SimulationLinkDatum<SimNode> {
-  id: string;
-  family: string;
-  strength: string;
-}
+const searchWrapStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 6,
+  alignItems: "center",
+  flex: 1,
+  minWidth: 0,
+};
 
-// ============================================================
-// Component
-// ============================================================
+const searchInputStyle: React.CSSProperties = {
+  flex: 1,
+  minWidth: 0,
+  border: "1px solid #253041",
+  borderRadius: 8,
+  background: "#111520",
+  color: "#dce7ff",
+  padding: "7px 10px",
+  fontFamily: "inherit",
+  fontSize: 10,
+};
 
-export default function SpatialGraphPanel() {
-  const { state, dispatch, massNodes, massRelations } = useGraph();
-  const svgRef = useRef<SVGSVGElement | null>(null);
-  const simulationRef = useRef<d3.Simulation<SimNode, SimLink> | null>(null);
+const zoomControlsStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 6,
+};
 
-  const selectedNodeId = state.selectedNodeId;
-
-  // Build connected set for emphasis
-  const connectedIds = useMemo(() => {
-    if (!selectedNodeId) return new Set<string>();
-    const ids = new Set<string>();
-    for (const r of massRelations) {
-      if (r.source === selectedNodeId) ids.add(r.target);
-      if (r.target === selectedNodeId) ids.add(r.source);
-    }
-    return ids;
-  }, [selectedNodeId, massRelations]);
-
-  // Build sim data
-  const { simNodes, simLinks } = useMemo(() => {
-    const nodes: SimNode[] = massNodes.map((n, i) => ({
-      id: n.id,
-      type: n.type,
-      label: n.label,
-      massIndex: i,
-    }));
-    const nodeIds = new Set(nodes.map((n) => n.id));
-    const links: SimLink[] = massRelations
-      .filter((r) => nodeIds.has(r.source) && nodeIds.has(r.target))
-      .map((r) => ({
-        id: r.id,
-        source: r.source,
-        target: r.target,
-        family: r.family,
-        strength: r.strength,
-      }));
-    return { simNodes: nodes, simLinks: links };
-  }, [massNodes, massRelations]);
-
-  // Node click handler
-  const handleNodeClick = useCallback(
-    (nodeId: string) => {
-      dispatch({ type: "SELECT_NODE", nodeId: selectedNodeId === nodeId ? null : nodeId });
-    },
-    [dispatch, selectedNodeId],
-  );
-
-  // D3 render
-  useEffect(() => {
-    const svg = svgRef.current;
-    if (!svg) return;
-
-    const container = svg.parentElement;
-    if (!container) return;
-
-    const width = container.clientWidth;
-    const height = container.clientHeight;
-
-    const sel = d3.select(svg);
-    sel.selectAll("*").remove();
-    sel.attr("width", width).attr("height", height);
-
-    if (simNodes.length === 0) return;
-
-    // Deep copy nodes to avoid mutating memo
-    const nodes: SimNode[] = simNodes.map((n) => ({ ...n }));
-    const nodeMap = new Map(nodes.map((n) => [n.id, n]));
-    const links: SimLink[] = simLinks.map((l) => ({
-      ...l,
-      source: l.source as any,
-      target: l.target as any,
-    }));
-
-    // Force simulation
-    const simulation = d3
-      .forceSimulation(nodes)
-      .force(
-        "link",
-        d3
-          .forceLink<SimNode, SimLink>(links)
-          .id((d) => d.id)
-          .distance(LINK_DISTANCE),
-      )
-      .force("charge", d3.forceManyBody().strength(CHARGE_STRENGTH))
-      .force("center", d3.forceCenter(width / 2, height / 2))
-      .force("collide", d3.forceCollide(COLLIDE_RADIUS));
-
-    simulationRef.current = simulation;
-
-    // Links
-    const linkSel = sel
-      .append("g")
-      .attr("class", "links")
-      .selectAll("line")
-      .data(links)
-      .enter()
-      .append("line")
-      .attr("stroke", (d) => MASS_RELATION_COLORS[d.family] ?? "#333")
-      .attr("stroke-width", (d) => getEdgeWidth(d.strength))
-      .attr("stroke-opacity", 0.6);
-
-    // Node groups
-    const nodeSel = sel
-      .append("g")
-      .attr("class", "nodes")
-      .selectAll<SVGGElement, SimNode>("g")
-      .data(nodes)
-      .enter()
-      .append("g")
-      .style("cursor", "pointer")
-      .on("click", (_event, d) => handleNodeClick(d.id));
-
-    // Node circles
-    nodeSel
-      .append("circle")
-      .attr("r", (d) => getNodeRadius(d.type))
-      .attr("fill", (d) => getMassIdentityColor(d.massIndex))
-      .attr("stroke", "none")
-      .attr("stroke-width", 0);
-
-    // Labels
-    nodeSel
-      .append("text")
-      .text((d) => truncateLabel(d.label))
-      .attr("text-anchor", "middle")
-      .attr("dy", (d) => getNodeRadius(d.type) + 12)
-      .attr("font-size", 9)
-      .attr("fill", "#e0e0e0")
-      .attr("pointer-events", "none");
-
-    // Drag behaviour
-    const drag = d3
-      .drag<SVGGElement, SimNode>()
-      .on("start", (event, d) => {
-        if (!event.active) simulation.alphaTarget(0.3).restart();
-        d.fx = d.x;
-        d.fy = d.y;
-      })
-      .on("drag", (event, d) => {
-        d.fx = event.x;
-        d.fy = event.y;
-      })
-      .on("end", (event, d) => {
-        if (!event.active) simulation.alphaTarget(0);
-        d.fx = null;
-        d.fy = null;
-      });
-
-    nodeSel.call(drag);
-
-    // Tick
-    simulation.on("tick", () => {
-      linkSel
-        .attr("x1", (d) => (d.source as SimNode).x!)
-        .attr("y1", (d) => (d.source as SimNode).y!)
-        .attr("x2", (d) => (d.target as SimNode).x!)
-        .attr("y2", (d) => (d.target as SimNode).y!);
-
-      nodeSel.attr("transform", (d) => `translate(${d.x},${d.y})`);
-    });
-
-    return () => {
-      simulation.stop();
-    };
-  }, [simNodes, simLinks, handleNodeClick]);
-
-  // Selection emphasis (update styles without restarting simulation)
-  useEffect(() => {
-    const svg = svgRef.current;
-    if (!svg) return;
-
-    const sel = d3.select(svg);
-
-    // Update node circles
-    sel.selectAll<SVGGElement, SimNode>("g.nodes g").each(function (d) {
-      const g = d3.select(this);
-      const circle = g.select("circle");
-      const text = g.select("text");
-
-      if (!selectedNodeId) {
-        // No selection: all fully visible
-        circle.attr("stroke", "none").attr("stroke-width", 0).attr("opacity", 1);
-        text.attr("opacity", 1);
-        return;
-      }
-
-      if (d.id === selectedNodeId) {
-        // Selected: highlight ring
-        circle
-          .attr("stroke", "#fff")
-          .attr("stroke-width", 3)
-          .attr("opacity", 1);
-        text.attr("opacity", 1);
-      } else if (connectedIds.has(d.id)) {
-        // Connected: secondary emphasis
-        circle
-          .attr("stroke", "#888")
-          .attr("stroke-width", 1.5)
-          .attr("opacity", 0.9);
-        text.attr("opacity", 0.9);
-      } else {
-        // Unrelated: fade
-        circle.attr("stroke", "none").attr("stroke-width", 0).attr("opacity", 0.2);
-        text.attr("opacity", 0.2);
-      }
-    });
-
-    // Update links
-    sel.selectAll<SVGLineElement, SimLink>("g.links line").each(function (d) {
-      const line = d3.select(this);
-      if (!selectedNodeId) {
-        line.attr("stroke-opacity", 0.6);
-        return;
-      }
-      const srcId = typeof d.source === "string" ? d.source : (d.source as SimNode).id;
-      const tgtId = typeof d.target === "string" ? d.target : (d.target as SimNode).id;
-      if (srcId === selectedNodeId || tgtId === selectedNodeId) {
-        line.attr("stroke-opacity", 0.9);
-      } else {
-        line.attr("stroke-opacity", 0.1);
-      }
-    });
-  }, [selectedNodeId, connectedIds]);
-
-  // Legend entries
-  const relationFamilies = Object.entries(MASS_RELATION_COLORS);
-
-  return (
-    <div style={containerStyle}>
-      {/* Header */}
-      <div style={headerStyle}>
-        <span style={{ color: "#e0e0e0", fontWeight: 600, marginRight: 12 }}>
-          SpatialMassGraph
-        </span>
-        <span>
-          {massNodes.length} nodes &middot; {massRelations.length} relations
-        </span>
-      </div>
-
-      {/* SVG container */}
-      <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
-        <svg
-          ref={svgRef}
-          style={{ width: "100%", height: "100%", display: "block" }}
-        />
-      </div>
-
-      {/* Legend */}
-      <div
-        style={{
-          padding: "6px 12px",
-          borderTop: "1px solid #1a1a2e",
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 10,
-          fontSize: 9,
-          color: "#888",
-        }}
-      >
-        {relationFamilies.map(([family, color]) => (
-          <span key={family} style={{ display: "flex", alignItems: "center", gap: 4 }}>
-            <span
-              style={{
-                display: "inline-block",
-                width: 14,
-                height: 3,
-                background: color,
-                borderRadius: 1,
-              }}
-            />
-            {family}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
+const controlButtonStyle: React.CSSProperties = {
+  border: "1px solid #2b3d59",
+  background: "#111520",
+  color: "#dce7ff",
+  borderRadius: 8,
+  padding: "7px 10px",
+  fontSize: 10,
+  fontFamily: "inherit",
+  cursor: "pointer",
+};

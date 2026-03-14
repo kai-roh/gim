@@ -1,2234 +1,1096 @@
 "use client";
 
-import React, { useRef, useEffect, useCallback } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { OBJExporter } from "three/addons/exporters/OBJExporter.js";
+import { STLExporter } from "three/addons/exporters/STLExporter.js";
+import type { ResolvedMassNode, SpatialMassGraph } from "@gim/core";
 import { useGraph } from "@/lib/graph-context";
-import { ZONE_COLORS_HEX, FUNC_COLORS_HEX, MASS_TYPE_COLORS_HEX, getMassIdentityColorHex } from "@/lib/graph-colors";
-import {
-  generateFloorOutline,
-  getDominantFormDNA,
-  getFloorFormDNA,
-  shouldHaveTerrace,
-  isInVoidCut,
-  type ArchitectFormDNA,
-} from "@/lib/architect-form";
-import type { FloorNode, VerticalNodeGraph, SpatialMassGraph, MassNode, MassRelation } from "@gim/core";
+import { massColor } from "@/lib/graph-colors";
 
-// ============================================================
-// Constants
-// ============================================================
+const ORTHO_VIEW_HEIGHT = 92;
+const CAMERA_OFFSET = new THREE.Vector3(60, 68, 60);
+const SUBTRACTABLE_PRIMITIVES = new Set(["block", "bar", "plate", "tower", "bridge"]);
+const BOUNDS_EPSILON = 0.05;
 
-const DEFAULT_CEILING: Record<string, number> = {
-  basement: 3.5, ground: 5.0, lower: 4.5, middle: 3.8, upper: 3.8, penthouse: 4.2, rooftop: 3.5,
+type LocalBounds = {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+  minZ: number;
+  maxZ: number;
 };
 
-function getFuncCategory(fn: string): string {
-  if (["elevator_core", "stairwell", "elevator_lobby", "service_shaft"].includes(fn)) return "core";
-  if (["brand_showroom", "exhibition_hall", "experiential_retail", "gallery", "installation_space"].includes(fn)) return "experience";
-  if (["lobby", "public_void", "atrium", "community_space", "event_space"].includes(fn)) return "public";
-  if (["open_office", "premium_office", "executive_suite", "coworking", "focus_room"].includes(fn)) return "office";
-  if (["lounge", "rooftop_bar", "sky_garden", "meditation_room", "fitness", "library"].includes(fn)) return "social";
-  if (["mechanical_room", "electrical_room", "server_room"].includes(fn)) return "mechanical";
-  if (["parking", "loading_dock", "bicycle_storage"].includes(fn)) return "parking";
-  return "amenity";
-}
+type NodeRenderBundle = {
+  solidGroup?: THREE.Group;
+  solidMeshes: THREE.Mesh[];
+  overlayGroup?: THREE.Group;
+  overlayLines: THREE.LineSegments[];
+};
 
-// ============================================================
-// Types
-// ============================================================
-
-interface FloorBuildData {
-  floor: number;
-  y: number;
-  h: number;
-  zone: string;
-  outline: [number, number][];
-  floorDNA: ArchitectFormDNA;
-  nodes: FloorNode[];
-  baseW: number;
-  baseD: number;
-  coreR: number;
-  hasTerrace: boolean;
-  aboveIdx: number;
-  totalAbove: number;
-}
-
-interface SceneState {
-  scene: THREE.Scene;
-  camera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
-  renderer: THREE.WebGLRenderer;
-  controls: OrbitControls;
-  nodeMeshes: Map<string, THREE.Mesh>;
-  floorSlabs: Map<number, THREE.Group>;
-  selectables: THREE.Object3D[];
-  animId: number;
+type BuiltMassScene = {
   massGroup: THREE.Group;
-  detailGroup: THREE.Group;
-  floorData: FloorBuildData[];
+  overlayGroup: THREE.Group;
+  bundles: Map<string, NodeRenderBundle>;
+  interactables: THREE.Object3D[];
+};
+
+type VoidCut = {
+  nodeId: string;
+  bounds: LocalBounds;
+};
+
+type VoidOverlayRecord = {
+  hostNode: ResolvedMassNode;
+  bounds: LocalBounds[];
+};
+
+function createGeometry(node: ResolvedMassNode): THREE.BufferGeometry {
+  const { width, depth, height } = node.dimensions;
+
+  switch (node.primitive) {
+    case "cylinder":
+      return new THREE.CylinderGeometry(width * 0.5, width * 0.5, height, 28);
+    case "bridge":
+      return new THREE.BoxGeometry(width, Math.max(height, 2.4), Math.max(depth, 3.5));
+    case "tower":
+      return new THREE.BoxGeometry(width, height, depth);
+    case "ring":
+      return new THREE.TorusGeometry(
+        Math.max(width, depth) * 0.34,
+        Math.max(Math.min(width, depth) * 0.12, 1.4),
+        18,
+        36
+      );
+    case "plate":
+      return new THREE.BoxGeometry(width, Math.max(height, 1.8), depth);
+    case "bar":
+      return new THREE.BoxGeometry(width, height, depth);
+    default:
+      return new THREE.BoxGeometry(width, height, depth);
+  }
 }
 
-// ============================================================
-// Component
-// ============================================================
+function createSolidMaterial(node: ResolvedMassNode): THREE.MeshStandardMaterial {
+  const color = new THREE.Color(massColor(node.node_id));
+  return new THREE.MeshStandardMaterial({
+    color,
+    transparent: true,
+    opacity: node.shell.opacity,
+    roughness: node.shell.skin === "opaque" ? 0.64 : 0.42,
+    metalness: node.kind === "core" ? 0.18 : 0.08,
+    emissive: color.clone().multiplyScalar(node.boolean_operations.length > 0 ? 0.2 : 0.14),
+  });
+}
+
+function createSolidMesh(
+  node: ResolvedMassNode,
+  geometry: THREE.BufferGeometry,
+  offset?: { x: number; y: number; z: number }
+): THREE.Mesh {
+  const mesh = new THREE.Mesh(geometry, createSolidMaterial(node));
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  mesh.position.set(offset?.x ?? 0, offset?.y ?? 0, offset?.z ?? 0);
+  mesh.userData.nodeId = node.node_id;
+  mesh.name = node.node_id;
+  return mesh;
+}
+
+function createWireframeMaterial(nodeId: string, opacity = 0.94) {
+  return new THREE.LineBasicMaterial({
+    color: new THREE.Color(massColor(nodeId)),
+    transparent: true,
+    opacity,
+    depthTest: false,
+  });
+}
+
+function applyNodeTransform(group: THREE.Group, node: ResolvedMassNode) {
+  group.position.set(node.transform.x, node.transform.y, node.transform.z);
+  group.rotation.set(
+    node.transform.rotation_x,
+    node.transform.rotation_y,
+    node.transform.rotation_z
+  );
+  group.userData.nodeId = node.node_id;
+  group.name = node.node_id;
+}
+
+function nodeBounds(node: ResolvedMassNode): LocalBounds {
+  return {
+    minX: -node.dimensions.width / 2,
+    maxX: node.dimensions.width / 2,
+    minY: -node.dimensions.height / 2,
+    maxY: node.dimensions.height / 2,
+    minZ: -node.dimensions.depth / 2,
+    maxZ: node.dimensions.depth / 2,
+  };
+}
+
+function boundsSize(bounds: LocalBounds) {
+  return {
+    width: bounds.maxX - bounds.minX,
+    height: bounds.maxY - bounds.minY,
+    depth: bounds.maxZ - bounds.minZ,
+  };
+}
+
+function boundsCenter(bounds: LocalBounds) {
+  return {
+    x: (bounds.minX + bounds.maxX) / 2,
+    y: (bounds.minY + bounds.maxY) / 2,
+    z: (bounds.minZ + bounds.maxZ) / 2,
+  };
+}
+
+function buildNodeMatrix(node: ResolvedMassNode) {
+  const matrix = new THREE.Matrix4();
+  const quaternion = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(
+      node.transform.rotation_x,
+      node.transform.rotation_y,
+      node.transform.rotation_z
+    )
+  );
+  matrix.compose(
+    new THREE.Vector3(node.transform.x, node.transform.y, node.transform.z),
+    quaternion,
+    new THREE.Vector3(1, 1, 1)
+  );
+  return matrix;
+}
+
+function boundsCorners(bounds: LocalBounds) {
+  return [
+    new THREE.Vector3(bounds.minX, bounds.minY, bounds.minZ),
+    new THREE.Vector3(bounds.minX, bounds.minY, bounds.maxZ),
+    new THREE.Vector3(bounds.minX, bounds.maxY, bounds.minZ),
+    new THREE.Vector3(bounds.minX, bounds.maxY, bounds.maxZ),
+    new THREE.Vector3(bounds.maxX, bounds.minY, bounds.minZ),
+    new THREE.Vector3(bounds.maxX, bounds.minY, bounds.maxZ),
+    new THREE.Vector3(bounds.maxX, bounds.maxY, bounds.minZ),
+    new THREE.Vector3(bounds.maxX, bounds.maxY, bounds.maxZ),
+  ];
+}
+
+function intersectBounds(a: LocalBounds, b: LocalBounds): LocalBounds | null {
+  const intersection = {
+    minX: Math.max(a.minX, b.minX),
+    maxX: Math.min(a.maxX, b.maxX),
+    minY: Math.max(a.minY, b.minY),
+    maxY: Math.min(a.maxY, b.maxY),
+    minZ: Math.max(a.minZ, b.minZ),
+    maxZ: Math.min(a.maxZ, b.maxZ),
+  };
+
+  if (
+    intersection.maxX - intersection.minX <= BOUNDS_EPSILON ||
+    intersection.maxY - intersection.minY <= BOUNDS_EPSILON ||
+    intersection.maxZ - intersection.minZ <= BOUNDS_EPSILON
+  ) {
+    return null;
+  }
+
+  return intersection;
+}
+
+function subtractBounds(host: LocalBounds, cut: LocalBounds): LocalBounds[] {
+  const intersection = intersectBounds(host, cut);
+  if (!intersection) return [host];
+
+  const fragments: LocalBounds[] = [];
+
+  if (intersection.minX - host.minX > BOUNDS_EPSILON) {
+    fragments.push({
+      minX: host.minX,
+      maxX: intersection.minX,
+      minY: host.minY,
+      maxY: host.maxY,
+      minZ: host.minZ,
+      maxZ: host.maxZ,
+    });
+  }
+
+  if (host.maxX - intersection.maxX > BOUNDS_EPSILON) {
+    fragments.push({
+      minX: intersection.maxX,
+      maxX: host.maxX,
+      minY: host.minY,
+      maxY: host.maxY,
+      minZ: host.minZ,
+      maxZ: host.maxZ,
+    });
+  }
+
+  if (intersection.minY - host.minY > BOUNDS_EPSILON) {
+    fragments.push({
+      minX: intersection.minX,
+      maxX: intersection.maxX,
+      minY: host.minY,
+      maxY: intersection.minY,
+      minZ: host.minZ,
+      maxZ: host.maxZ,
+    });
+  }
+
+  if (host.maxY - intersection.maxY > BOUNDS_EPSILON) {
+    fragments.push({
+      minX: intersection.minX,
+      maxX: intersection.maxX,
+      minY: intersection.maxY,
+      maxY: host.maxY,
+      minZ: host.minZ,
+      maxZ: host.maxZ,
+    });
+  }
+
+  if (intersection.minZ - host.minZ > BOUNDS_EPSILON) {
+    fragments.push({
+      minX: intersection.minX,
+      maxX: intersection.maxX,
+      minY: intersection.minY,
+      maxY: intersection.maxY,
+      minZ: host.minZ,
+      maxZ: intersection.minZ,
+    });
+  }
+
+  if (host.maxZ - intersection.maxZ > BOUNDS_EPSILON) {
+    fragments.push({
+      minX: intersection.minX,
+      maxX: intersection.maxX,
+      minY: intersection.minY,
+      maxY: intersection.maxY,
+      minZ: intersection.maxZ,
+      maxZ: host.maxZ,
+    });
+  }
+
+  return fragments;
+}
+
+function subtractCutsFromBounds(host: LocalBounds, cuts: VoidCut[]) {
+  let fragments = [host];
+  const overlaps = new Map<string, LocalBounds[]>();
+
+  for (const cut of cuts) {
+    const nextFragments: LocalBounds[] = [];
+    for (const fragment of fragments) {
+      const overlap = intersectBounds(fragment, cut.bounds);
+      if (overlap) {
+        const current = overlaps.get(cut.nodeId) ?? [];
+        current.push(overlap);
+        overlaps.set(cut.nodeId, current);
+      }
+      nextFragments.push(...subtractBounds(fragment, cut.bounds));
+    }
+    fragments = nextFragments;
+  }
+
+  return { fragments, overlaps };
+}
+
+function targetBoundsInHostLocal(
+  hostNode: ResolvedMassNode,
+  targetNode: ResolvedMassNode
+): LocalBounds | null {
+  const hostMatrixInverse = buildNodeMatrix(hostNode).invert();
+  const targetMatrix = buildNodeMatrix(targetNode);
+  const hostBounds = nodeBounds(hostNode);
+  const points = boundsCorners(nodeBounds(targetNode)).map((point) =>
+    point.clone().applyMatrix4(targetMatrix).applyMatrix4(hostMatrixInverse)
+  );
+
+  const targetBounds = points.reduce(
+    (acc, point) => ({
+      minX: Math.min(acc.minX, point.x),
+      maxX: Math.max(acc.maxX, point.x),
+      minY: Math.min(acc.minY, point.y),
+      maxY: Math.max(acc.maxY, point.y),
+      minZ: Math.min(acc.minZ, point.z),
+      maxZ: Math.max(acc.maxZ, point.z),
+    }),
+    {
+      minX: Infinity,
+      maxX: -Infinity,
+      minY: Infinity,
+      maxY: -Infinity,
+      minZ: Infinity,
+      maxZ: -Infinity,
+    }
+  );
+
+  return intersectBounds(hostBounds, targetBounds);
+}
+
+function buildBoundsMesh(node: ResolvedMassNode, bounds: LocalBounds) {
+  const size = boundsSize(bounds);
+  const center = boundsCenter(bounds);
+  const geometry = new THREE.BoxGeometry(size.width, size.height, size.depth);
+  return createSolidMesh(node, geometry, center);
+}
+
+function buildBoundsWireframe(
+  nodeId: string,
+  bounds: LocalBounds,
+  opacity = 0.94
+): THREE.LineSegments {
+  const size = boundsSize(bounds);
+  const center = boundsCenter(bounds);
+  const base = new THREE.BoxGeometry(size.width, size.height, size.depth);
+  const geometry = new THREE.EdgesGeometry(base);
+  base.dispose();
+  const lines = new THREE.LineSegments(geometry, createWireframeMaterial(nodeId, opacity));
+  lines.position.set(center.x, center.y, center.z);
+  lines.userData.nodeId = nodeId;
+  lines.renderOrder = 12;
+  return lines;
+}
+
+function buildDirectWireframe(node: ResolvedMassNode): THREE.LineSegments {
+  const geometry = createGeometry(node);
+  const edges = new THREE.EdgesGeometry(geometry);
+  geometry.dispose();
+  const lines = new THREE.LineSegments(edges, createWireframeMaterial(node.node_id, 0.94));
+  lines.userData.nodeId = node.node_id;
+  lines.renderOrder = 12;
+  return lines;
+}
+
+function ensureBundle(
+  bundles: Map<string, NodeRenderBundle>,
+  nodeId: string
+): NodeRenderBundle {
+  const existing = bundles.get(nodeId);
+  if (existing) return existing;
+  const bundle: NodeRenderBundle = {
+    solidMeshes: [],
+    overlayLines: [],
+  };
+  bundles.set(nodeId, bundle);
+  return bundle;
+}
+
+function buildMassScene(graph: SpatialMassGraph): BuiltMassScene {
+  const massGroup = new THREE.Group();
+  massGroup.name = "resolved_spatial_mass_model";
+  const overlayGroup = new THREE.Group();
+  overlayGroup.name = "resolved_void_overlays";
+  const bundles = new Map<string, NodeRenderBundle>();
+  const interactables: THREE.Object3D[] = [];
+  const nodesById = new Map(graph.resolved_model.nodes.map((node) => [node.node_id, node]));
+  const overlayRecords = new Map<string, VoidOverlayRecord[]>();
+
+  for (const node of graph.resolved_model.nodes) {
+    const bundle = ensureBundle(bundles, node.node_id);
+
+    if (node.kind === "void") {
+      continue;
+    }
+
+    const group = new THREE.Group();
+    applyNodeTransform(group, node);
+
+    let fragmentBounds = [nodeBounds(node)];
+    if (
+      node.boolean_operations.length > 0 &&
+      SUBTRACTABLE_PRIMITIVES.has(node.primitive)
+    ) {
+      const cuts: VoidCut[] = [];
+      for (const operation of node.boolean_operations) {
+        const targetNode = nodesById.get(operation.target_node_id);
+        if (!targetNode) continue;
+        const localBounds = targetBoundsInHostLocal(node, targetNode);
+        if (!localBounds) continue;
+        cuts.push({
+          nodeId: targetNode.node_id,
+          bounds: localBounds,
+        });
+      }
+
+      if (cuts.length > 0) {
+        const resolved = subtractCutsFromBounds(nodeBounds(node), cuts);
+        fragmentBounds = resolved.fragments;
+
+        for (const [voidNodeId, bounds] of resolved.overlaps) {
+          const current = overlayRecords.get(voidNodeId) ?? [];
+          current.push({
+            hostNode: node,
+            bounds,
+          });
+          overlayRecords.set(voidNodeId, current);
+        }
+      }
+    }
+
+    if (fragmentBounds.length === 0) {
+      fragmentBounds = [nodeBounds(node)];
+    }
+
+    for (const bounds of fragmentBounds) {
+      const mesh = buildBoundsMesh(node, bounds);
+      group.add(mesh);
+      bundle.solidMeshes.push(mesh);
+      interactables.push(mesh);
+    }
+
+    bundle.solidGroup = group;
+    massGroup.add(group);
+  }
+
+  for (const node of graph.resolved_model.nodes) {
+    if (node.kind !== "void") continue;
+
+    const bundle = ensureBundle(bundles, node.node_id);
+    const nodeOverlayGroup = new THREE.Group();
+    nodeOverlayGroup.name = `${node.node_id}__overlay`;
+    nodeOverlayGroup.visible = false;
+    nodeOverlayGroup.userData.nodeId = node.node_id;
+    const records = overlayRecords.get(node.node_id) ?? [];
+
+    if (records.length > 0) {
+      for (const record of records) {
+        const anchorGroup = new THREE.Group();
+        applyNodeTransform(anchorGroup, record.hostNode);
+        for (const bounds of record.bounds) {
+          const lines = buildBoundsWireframe(node.node_id, bounds);
+          anchorGroup.add(lines);
+          bundle.overlayLines.push(lines);
+          interactables.push(lines);
+        }
+        nodeOverlayGroup.add(anchorGroup);
+      }
+    } else {
+      const anchorGroup = new THREE.Group();
+      applyNodeTransform(anchorGroup, node);
+      const lines = buildDirectWireframe(node);
+      anchorGroup.add(lines);
+      bundle.overlayLines.push(lines);
+      interactables.push(lines);
+      nodeOverlayGroup.add(anchorGroup);
+    }
+
+    bundle.overlayGroup = nodeOverlayGroup;
+    overlayGroup.add(nodeOverlayGroup);
+  }
+
+  return {
+    massGroup,
+    overlayGroup,
+    bundles,
+    interactables,
+  };
+}
+
+function disposeGroup(group: THREE.Group) {
+  const disposedGeometries = new Set<THREE.BufferGeometry>();
+  const disposedMaterials = new Set<THREE.Material>();
+
+  group.traverse((object) => {
+    if (object instanceof THREE.Mesh || object instanceof THREE.LineSegments) {
+      if (!disposedGeometries.has(object.geometry)) {
+        object.geometry.dispose();
+        disposedGeometries.add(object.geometry);
+      }
+
+      const materials = Array.isArray(object.material)
+        ? object.material
+        : [object.material];
+      for (const material of materials) {
+        if (!disposedMaterials.has(material)) {
+          material.dispose();
+          disposedMaterials.add(material);
+        }
+      }
+    }
+  });
+}
+
+function updateOrthographicCamera(
+  camera: THREE.OrthographicCamera,
+  width: number,
+  height: number
+) {
+  const safeHeight = Math.max(height, 1);
+  const aspect = Math.max(width / safeHeight, 0.5);
+  const halfHeight = ORTHO_VIEW_HEIGHT / 2;
+  const halfWidth = halfHeight * aspect;
+  camera.left = -halfWidth;
+  camera.right = halfWidth;
+  camera.top = halfHeight;
+  camera.bottom = -halfHeight;
+  camera.updateProjectionMatrix();
+}
+
+function frameMassGroup(
+  camera: THREE.OrthographicCamera,
+  controls: OrbitControls,
+  group: THREE.Group
+) {
+  const box = new THREE.Box3().setFromObject(group);
+  if (box.isEmpty()) {
+    controls.target.set(0, 10, 0);
+    camera.position.copy(CAMERA_OFFSET);
+    camera.zoom = 1;
+    camera.updateProjectionMatrix();
+    controls.update();
+    return;
+  }
+
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  const aspect = (camera.right - camera.left) / Math.max(camera.top - camera.bottom, 1);
+  const planSpan = Math.max(size.x, size.z, 20);
+  const heightSpan = Math.max(size.y, 18);
+  const requiredHeight = Math.max(
+    heightSpan * 2.1,
+    (planSpan * 1.4) / Math.max(aspect, 0.8),
+    30
+  );
+
+  controls.target.copy(center);
+  camera.position.copy(center.clone().add(CAMERA_OFFSET));
+  camera.zoom = Math.min(3.4, Math.max(0.65, ORTHO_VIEW_HEIGHT / requiredHeight));
+  camera.updateProjectionMatrix();
+  controls.update();
+}
+
+function buildExportFilename(graph: SpatialMassGraph, extension: "obj" | "stl"): string {
+  const createdAt = graph.metadata.created_at
+    .replace(/[:.]/g, "-")
+    .replace("T", "_")
+    .replace("Z", "");
+  return `resolved_mass_model_${createdAt}.${extension}`;
+}
+
+function triggerDownload(contents: BlobPart, filename: string, type: string) {
+  const blob = new Blob([contents], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+function applyVisualState(
+  graph: SpatialMassGraph | null,
+  bundles: Map<string, NodeRenderBundle>,
+  selectedNodeId: string | null,
+  connectedIds: Set<string>
+) {
+  if (!graph) return;
+
+  for (const resolvedNode of graph.resolved_model.nodes) {
+    const bundle = bundles.get(resolvedNode.node_id);
+    if (!bundle) continue;
+
+    const color = new THREE.Color(massColor(resolvedNode.node_id));
+    const selected = resolvedNode.node_id === selectedNodeId;
+    const connected = connectedIds.has(resolvedNode.node_id);
+    const dimmed = Boolean(selectedNodeId) && !selected && !connected;
+    const emissiveStrength = selected
+      ? 0.24
+      : connected
+        ? 0.18
+        : resolvedNode.boolean_operations.length > 0
+          ? 0.18
+          : 0.14;
+    const opacity = selectedNodeId
+      ? selected
+        ? 0.98
+        : connected
+          ? 0.52
+          : 0.22
+      : resolvedNode.shell.opacity;
+
+    for (const mesh of bundle.solidMeshes) {
+      const material = mesh.material as THREE.MeshStandardMaterial;
+      material.color.copy(color);
+      material.emissive.copy(color.clone().multiplyScalar(emissiveStrength));
+      material.opacity = opacity;
+      material.transparent = opacity < 0.999;
+      material.needsUpdate = true;
+      mesh.visible = true;
+    }
+
+    if (bundle.solidGroup) {
+      bundle.solidGroup.renderOrder = selected ? 4 : connected ? 3 : dimmed ? 1 : 2;
+    }
+
+    const overlayVisible = resolvedNode.kind === "void" && selected;
+    if (bundle.overlayGroup) {
+      bundle.overlayGroup.visible = overlayVisible;
+      bundle.overlayGroup.renderOrder = overlayVisible ? 15 : 0;
+    }
+
+    for (const lines of bundle.overlayLines) {
+      const material = lines.material as THREE.LineBasicMaterial;
+      material.color.copy(color);
+      material.opacity = overlayVisible ? 0.96 : 0;
+      material.transparent = true;
+      material.needsUpdate = true;
+      lines.visible = overlayVisible;
+    }
+  }
+}
 
 export function MassViewer3D() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const sceneRef = useRef<SceneState | null>(null);
-  const { state, dispatch } = useGraph();
-  const { graph, massGraph, graphVersion, selectedNodeId, selectedFloor } = state;
+  const selectionRef = useRef<{
+    selectedNodeId: string | null;
+    connectedIds: Set<string>;
+  }>({
+    selectedNodeId: null,
+    connectedIds: new Set<string>(),
+  });
+  const sceneRef = useRef<{
+    scene: THREE.Scene;
+    camera: THREE.OrthographicCamera;
+    renderer: THREE.WebGLRenderer;
+    controls: OrbitControls;
+    massGroup: THREE.Group;
+    overlayGroup: THREE.Group;
+    bundles: Map<string, NodeRenderBundle>;
+    interactables: THREE.Object3D[];
+    animId: number;
+  } | null>(null);
+  const {
+    state,
+    dispatch,
+    variantHistory,
+    activeVariantId,
+    regenerateVariant,
+    activateVariant,
+    setVariantPreview,
+  } = useGraph();
+  const { graph, selectedNodeId } = state;
+  const activeVariant =
+    variantHistory.find((variant) => variant.id === activeVariantId) ?? null;
 
-  // ---- V2: SpatialMassGraph 3D rendering ----
-  const initSceneV2 = useCallback(() => {
-    if (!containerRef.current || !massGraph) return;
+  const connectedIds = useMemo(() => {
+    if (!graph || !selectedNodeId) return new Set<string>();
+    const ids = new Set<string>();
+    for (const relation of graph.relations) {
+      if (relation.source === selectedNodeId) ids.add(relation.target);
+      if (relation.target === selectedNodeId) ids.add(relation.source);
+    }
+    return ids;
+  }, [graph, selectedNodeId]);
+
+  useEffect(() => {
+    selectionRef.current = {
+      selectedNodeId,
+      connectedIds,
+    };
+  }, [connectedIds, selectedNodeId]);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
     if (sceneRef.current) return;
 
     const container = containerRef.current;
-    const W = container.clientWidth;
-    const H = container.clientHeight;
+    const width = container.clientWidth;
+    const height = container.clientHeight;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x000000);
-    scene.fog = new THREE.Fog(0x000000, 150, 500);
+    scene.background = new THREE.Color(0x0a0a12);
 
-    // Estimate building height from floor_range
-    const [floorMin, floorMax] = massGraph.metadata.floor_range;
-    const avgFloorH = 3.8;
-    const bldgH = (floorMax - floorMin + 1) * avgFloorH;
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1000);
+    updateOrthographicCamera(camera, width, height);
+    camera.position.copy(CAMERA_OFFSET);
 
-    const frustumSize = bldgH * 1.5;
-    const aspect = W / H;
-    const camera = new THREE.OrthographicCamera(
-      -frustumSize * aspect / 2, frustumSize * aspect / 2,
-      frustumSize / 2, -frustumSize / 2,
-      0.1, 1000
-    );
-    camera.position.set(50, bldgH * 0.6, 60);
-    camera.lookAt(0, bldgH * 0.35, 0);
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance", preserveDrawingBuffer: true });
-    renderer.setSize(W, H);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.6;
     container.appendChild(renderer.domElement);
 
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.set(0, bldgH * 0.35, 0);
     controls.enableDamping = true;
-    controls.dampingFactor = 0.06;
-    controls.minDistance = 12;
-    controls.maxDistance = 250;
-    controls.maxPolarAngle = Math.PI * 0.85;
+    controls.minZoom = 0.5;
+    controls.maxZoom = 5;
+    controls.target.set(0, 10, 0);
     controls.update();
 
-    // Lighting
-    scene.add(new THREE.HemisphereLight(0x7090c0, 0x1a1820, 0.7));
-    const key = new THREE.DirectionalLight(0xfff0dd, 1.8);
-    key.position.set(30, bldgH * 1.5, 40);
-    key.castShadow = true;
-    key.shadow.mapSize.set(2048, 2048);
-    const sc = Math.max(35, bldgH * 0.9);
-    key.shadow.camera.left = -sc; key.shadow.camera.right = sc;
-    key.shadow.camera.top = bldgH + 10; key.shadow.camera.bottom = -5;
-    key.shadow.bias = -0.0005;
-    key.shadow.normalBias = 0.02;
-    scene.add(key);
-    scene.add(new THREE.DirectionalLight(0x80a8d0, 0.6).translateX(-40).translateY(bldgH * 0.6));
-    scene.add(new THREE.DirectionalLight(0x90a0cc, 0.45).translateX(-15).translateY(bldgH * 0.4).translateZ(-50));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.86));
+    const hemi = new THREE.HemisphereLight(0xdce7ff, 0x0d1624, 0.55);
+    scene.add(hemi);
+    const dir = new THREE.DirectionalLight(0xffffff, 1.16);
+    dir.position.set(44, 62, 36);
+    dir.castShadow = true;
+    scene.add(dir);
 
-    const ref: SceneState = {
-      scene, camera, renderer, controls,
-      nodeMeshes: new Map(),
-      floorSlabs: new Map(),
-      selectables: [],
-      animId: 0,
-      massGroup: new THREE.Group(),
-      detailGroup: new THREE.Group(),
-      floorData: [],
-    };
-    sceneRef.current = ref;
+    const grid = new THREE.GridHelper(160, 16, 0x223044, 0x16202d);
+    scene.add(grid);
 
-    // Environment
-    buildMassGraphEnvironment(scene, massGraph);
-    // Build mass volumes
-    buildMassGraphVolumes(ref, massGraph, dispatch);
+    const massGroup = new THREE.Group();
+    const overlayGroup = new THREE.Group();
+    scene.add(massGroup);
+    scene.add(overlayGroup);
 
-    // Animate
-    function animate() {
-      ref.animId = requestAnimationFrame(animate);
-      controls.update();
-      renderer.render(scene, camera);
-    }
-    animate();
-
-    // Resize
-    const onResize = () => {
-      const w = container.clientWidth, h = container.clientHeight;
-      if (ref.camera instanceof THREE.OrthographicCamera) {
-        const newAspect = w / h;
-        ref.camera.left = -frustumSize * newAspect / 2;
-        ref.camera.right = frustumSize * newAspect / 2;
-        ref.camera.updateProjectionMatrix();
-      } else if (ref.camera instanceof THREE.PerspectiveCamera) {
-        ref.camera.aspect = w / h;
-        ref.camera.updateProjectionMatrix();
+    const raycaster = new THREE.Raycaster();
+    raycaster.params.Line = { threshold: 1.8 };
+    const mouse = new THREE.Vector2();
+    const onCanvasClick = (event: MouseEvent) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(mouse, camera);
+      const activeObjects = sceneRef.current?.interactables ?? [];
+      const hits = raycaster.intersectObjects(activeObjects, true);
+      if (hits.length > 0) {
+        const nodeId = hits[0].object.userData.nodeId;
+        if (nodeId) dispatch({ type: "SELECT_NODE", nodeId });
+      } else {
+        dispatch({ type: "SELECT_NODE", nodeId: null });
       }
-      renderer.setSize(w, h);
     };
+
+    renderer.domElement.addEventListener("click", onCanvasClick);
+
+    const onResize = () => {
+      const nextWidth = container.clientWidth;
+      const nextHeight = container.clientHeight;
+      updateOrthographicCamera(camera, nextWidth, nextHeight);
+      frameMassGroup(camera, controls, sceneRef.current?.massGroup ?? massGroup);
+      renderer.setSize(nextWidth, nextHeight);
+    };
+
+    let time = 0;
+    const animate = () => {
+      const ref = sceneRef.current;
+      if (!ref) return;
+      ref.animId = requestAnimationFrame(animate);
+      time += 0.01;
+      controls.update();
+
+      for (const [nodeId, bundle] of ref.bundles) {
+        if (!bundle.solidGroup) continue;
+        if (selectionRef.current.selectedNodeId && nodeId === selectionRef.current.selectedNodeId) {
+          bundle.solidGroup.scale.setScalar(1 + Math.sin(time * 2) * 0.03 + 0.06);
+        } else if (selectionRef.current.connectedIds.has(nodeId)) {
+          bundle.solidGroup.scale.setScalar(1.02);
+        } else {
+          bundle.solidGroup.scale.setScalar(1);
+        }
+      }
+
+      renderer.render(scene, camera);
+    };
+
     window.addEventListener("resize", onResize);
+    sceneRef.current = {
+      scene,
+      camera,
+      renderer,
+      controls,
+      massGroup,
+      overlayGroup,
+      bundles: new Map<string, NodeRenderBundle>(),
+      interactables: [],
+      animId: 0,
+    };
+    animate();
 
     return () => {
       window.removeEventListener("resize", onResize);
-      cancelAnimationFrame(ref.animId);
+      renderer.domElement.removeEventListener("click", onCanvasClick);
+      cancelAnimationFrame(sceneRef.current?.animId ?? 0);
+      scene.remove(massGroup);
+      scene.remove(overlayGroup);
+      disposeGroup(massGroup);
+      disposeGroup(overlayGroup);
       renderer.dispose();
-      if (container.contains(renderer.domElement)) container.removeChild(renderer.domElement);
+      if (container.contains(renderer.domElement)) {
+        container.removeChild(renderer.domElement);
+      }
       sceneRef.current = null;
     };
-  }, [massGraph, dispatch]);
+  }, [dispatch]);
 
-  // ---- V2: Selection highlight with fading ----
   useEffect(() => {
-    if (graphVersion !== 2) return;
     const ref = sceneRef.current;
     if (!ref) return;
 
-    // Toggle void wireframes visibility
-    ref.massGroup.traverse((obj) => {
-      if (obj.userData?.voidWireframe) {
-        obj.visible = obj.userData.nodeId === selectedNodeId;
-      }
-    });
+    ref.scene.remove(ref.massGroup);
+    ref.scene.remove(ref.overlayGroup);
+    disposeGroup(ref.massGroup);
+    disposeGroup(ref.overlayGroup);
 
-    if (!selectedNodeId) {
-      // No selection: restore all to full opacity
-      ref.massGroup.traverse((obj) => {
-        if ((obj as THREE.Mesh).isMesh) {
-          const mat = (obj as THREE.Mesh).material;
-          if (Array.isArray(mat)) return;
-          if (mat instanceof THREE.MeshPhysicalMaterial || mat instanceof THREE.MeshStandardMaterial) {
-            const origOpacity = obj.userData?.massOriginalOpacity;
-            if (origOpacity !== undefined) {
-              mat.opacity = origOpacity;
-              mat.transparent = mat.opacity < 1.0;
-            }
-            mat.emissive?.setHex(0x141c28);
-            mat.emissiveIntensity = 0.08;
-          }
-        }
-      });
+    if (!graph) {
+      ref.massGroup = new THREE.Group();
+      ref.massGroup.name = "resolved_spatial_mass_model";
+      ref.overlayGroup = new THREE.Group();
+      ref.overlayGroup.name = "resolved_void_overlays";
+      ref.bundles = new Map<string, NodeRenderBundle>();
+      ref.interactables = [];
+      ref.scene.add(ref.massGroup);
+      ref.scene.add(ref.overlayGroup);
       return;
     }
 
-    // Build connected set
-    const connectedIds = new Set<string>();
-    if (massGraph) {
-      for (const rel of massGraph.relations) {
-        if (rel.source === selectedNodeId) connectedIds.add(rel.target);
-        if (rel.target === selectedNodeId) connectedIds.add(rel.source);
-      }
-    }
+    const built = buildMassScene(graph);
+    ref.massGroup = built.massGroup;
+    ref.overlayGroup = built.overlayGroup;
+    ref.bundles = built.bundles;
+    ref.interactables = built.interactables;
+    ref.scene.add(built.massGroup);
+    ref.scene.add(built.overlayGroup);
+    frameMassGroup(ref.camera, ref.controls, built.massGroup);
+    applyVisualState(graph, built.bundles, selectedNodeId, connectedIds);
+  }, [graph]);
 
-    ref.massGroup.traverse((obj) => {
-      if ((obj as THREE.Mesh).isMesh) {
-        const mat = (obj as THREE.Mesh).material;
-        if (Array.isArray(mat)) return;
-        if (mat instanceof THREE.MeshPhysicalMaterial || mat instanceof THREE.MeshStandardMaterial) {
-          const nodeId = obj.userData?.nodeId;
-          if (nodeId === selectedNodeId) {
-            mat.opacity = 1.0;
-            mat.transparent = false;
-            mat.emissive?.setHex(0x222244);
-            mat.emissiveIntensity = 0.5;
-          } else if (connectedIds.has(nodeId)) {
-            mat.opacity = 0.6;
-            mat.transparent = true;
-            mat.emissive?.setHex(0x111122);
-            mat.emissiveIntensity = 0.15;
-          } else {
-            mat.opacity = 0.15;
-            mat.transparent = true;
-            mat.emissive?.setHex(0x000000);
-            mat.emissiveIntensity = 0.0;
-          }
-        }
-      }
-    });
-  }, [selectedNodeId, graphVersion, massGraph]);
-
-  const initScene = useCallback(() => {
-    if (!containerRef.current || !graph) return;
-    if (sceneRef.current) return;
-
-    const container = containerRef.current;
-    const W = container.clientWidth;
-    const H = container.clientHeight;
-
-    const bldgH = estimateBuildingHeight(graph);
-
-    // ---- Scene ----
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x000000);
-    scene.fog = new THREE.Fog(0x000000, 100, 350);
-
-    // ---- Camera ----
-    const camera = new THREE.PerspectiveCamera(45, W / H, 0.5, 500);
-    camera.position.set(40, bldgH * 0.55, 50);
-    camera.lookAt(0, bldgH * 0.35, 0);
-
-    // ---- Renderer ----
-    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance", preserveDrawingBuffer: true });
-    renderer.setSize(W, H);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.6;
-    container.appendChild(renderer.domElement);
-
-    // ---- Controls ----
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.set(0, bldgH * 0.35, 0);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.06;
-    controls.minDistance = 12;
-    controls.maxDistance = 180;
-    controls.maxPolarAngle = Math.PI * 0.85;
-    controls.update();
-
-    // ---- Lighting ----
-    scene.add(new THREE.HemisphereLight(0x7090c0, 0x1a1820, 0.7));
-    const key = new THREE.DirectionalLight(0xfff0dd, 1.8);
-    key.position.set(30, bldgH * 1.5, 40);
-    key.castShadow = true;
-    key.shadow.mapSize.set(2048, 2048);
-    const sc = Math.max(35, bldgH * 0.9);
-    key.shadow.camera.left = -sc; key.shadow.camera.right = sc;
-    key.shadow.camera.top = bldgH + 10; key.shadow.camera.bottom = -5;
-    key.shadow.bias = -0.0005;
-    key.shadow.normalBias = 0.02;
-    scene.add(key);
-    const fill = new THREE.DirectionalLight(0x80a8d0, 0.6);
-    fill.position.set(-40, bldgH * 0.6, -25);
-    scene.add(fill);
-    const rim = new THREE.DirectionalLight(0x90a0cc, 0.45);
-    rim.position.set(-15, bldgH * 0.4, -50);
-    scene.add(rim);
-    const bounce = new THREE.PointLight(0xddccaa, 0.3, bldgH * 2);
-    bounce.position.set(0, -2, 0);
-    scene.add(bounce);
-
-    // ---- State ----
-    const ref: SceneState = {
-      scene, camera, renderer, controls,
-      nodeMeshes: new Map(),
-      floorSlabs: new Map(),
-      selectables: [],
-      animId: 0,
-      massGroup: new THREE.Group(),
-      detailGroup: new THREE.Group(),
-      floorData: [],
-    };
-    sceneRef.current = ref;
-
-    // ---- Build ----
-    buildEnvironment(scene, graph);
-    buildBuilding(ref, graph);
-
-    // ---- Animate ----
-    let t = 0;
-    function animate() {
-      ref.animId = requestAnimationFrame(animate);
-      t += 0.004;
-      controls.update();
-      renderer.render(scene, camera);
-    }
-    animate();
-
-    // ---- Resize ----
-    const onResize = () => {
-      const w = container.clientWidth, h = container.clientHeight;
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-      renderer.setSize(w, h);
-    };
-    window.addEventListener("resize", onResize);
-
-    return () => {
-      window.removeEventListener("resize", onResize);
-      cancelAnimationFrame(ref.animId);
-      renderer.dispose();
-      if (container.contains(renderer.domElement)) container.removeChild(renderer.domElement);
-      sceneRef.current = null;
-    };
-  }, [graph, dispatch]);
-
-  useEffect(() => {
-    if (graphVersion === 2 && massGraph) return initSceneV2();
-    if (graphVersion === 1 && graph) return initScene();
-  }, [initScene, initSceneV2, graphVersion, graph, massGraph]);
-
-  // ---- Selected Floor Mode Effect ----
   useEffect(() => {
     const ref = sceneRef.current;
     if (!ref || !graph) return;
+    applyVisualState(graph, ref.bundles, selectedNodeId, connectedIds);
+  }, [connectedIds, graph, selectedNodeId]);
 
-    // Clear previous detail group
-    while (ref.detailGroup.children.length > 0) {
-      const child = ref.detailGroup.children[0];
-      ref.detailGroup.remove(child);
-    }
-    // Clear selectables and nodeMeshes from detail mode
-    ref.selectables.length = 0;
-    ref.nodeMeshes.clear();
+  useEffect(() => {
+    const ref = sceneRef.current;
+    if (!ref || !graph || !activeVariantId || activeVariant?.previewDataUrl) return;
 
-    if (selectedFloor === null || selectedFloor === undefined) {
-      // ---- Mass Mode: fully opaque mass ----
-      ref.massGroup.traverse((obj) => {
-        if ((obj as THREE.Mesh).isMesh || (obj as THREE.LineSegments).isLineSegments) {
-          const mat = (obj as THREE.Mesh).material;
-          if (mat && !Array.isArray(mat)) {
-            const m = mat as THREE.MeshPhysicalMaterial;
-            if (m.opacity !== undefined) {
-              // Restore full opacity — but respect original material settings
-              // Mass materials are tagged with userData.massOriginalOpacity
-              if (obj.userData?.massOriginalOpacity !== undefined) {
-                m.opacity = obj.userData.massOriginalOpacity;
-                m.transparent = m.opacity < 1.0;
-              }
-            }
-          }
+    let frameA = 0;
+    let frameB = 0;
+    frameA = requestAnimationFrame(() => {
+      frameB = requestAnimationFrame(() => {
+        try {
+          const previewDataUrl = ref.renderer.domElement.toDataURL("image/png");
+          setVariantPreview(activeVariantId, previewDataUrl);
+        } catch {
+          return;
         }
       });
-      // Remove detail group from scene
-      if (ref.detailGroup.parent) {
-        ref.scene.remove(ref.detailGroup);
-      }
-    } else {
-      // ---- Section Mode: semi-transparent mass + floor details ----
-      // Make mass group semi-transparent
-      ref.massGroup.traverse((obj) => {
-        if ((obj as THREE.Mesh).isMesh || (obj as THREE.LineSegments).isLineSegments) {
-          const mat = (obj as THREE.Mesh).material;
-          if (mat && !Array.isArray(mat)) {
-            const m = mat as THREE.MeshPhysicalMaterial;
-            if (m.opacity !== undefined) {
-              // Store original opacity on first transition
-              if (obj.userData.massOriginalOpacity === undefined) {
-                obj.userData.massOriginalOpacity = m.opacity;
-              }
-              m.opacity = 0.15;
-              m.transparent = true;
-            }
-          }
-        }
-      });
+    });
 
-      // Build detail for selected floor + adjacent floors
-      const floorNumbers = ref.floorData.map((fd) => fd.floor).sort((a, b) => a - b);
-      const selIdx = floorNumbers.indexOf(selectedFloor);
+    return () => {
+      cancelAnimationFrame(frameA);
+      cancelAnimationFrame(frameB);
+    };
+  }, [activeVariant?.previewDataUrl, activeVariantId, graph, setVariantPreview]);
 
-      for (let offset = -1; offset <= 1; offset++) {
-        const idx = selIdx + offset;
-        if (idx < 0 || idx >= floorNumbers.length) continue;
-        const floorNum = floorNumbers[idx];
-        const fd = ref.floorData.find((d) => d.floor === floorNum);
-        if (!fd) continue;
+  const handleExportObj = () => {
+    if (!graph) return;
+    const ref = sceneRef.current;
+    if (!ref) return;
+    const exporter = new OBJExporter();
+    const obj = exporter.parse(ref.massGroup);
+    triggerDownload(obj, buildExportFilename(graph, "obj"), "text/plain;charset=utf-8");
+  };
 
-        const isSelected = offset === 0;
-        const group = buildFloorDetail(ref, fd, isSelected);
-        ref.detailGroup.add(group);
-      }
-
-      // Add detail group to scene
-      if (!ref.detailGroup.parent) {
-        ref.scene.add(ref.detailGroup);
-      }
-    }
-  }, [selectedFloor, graph]);
-
-  // Node selection is handled by the 2D floor plan canvas in NodeInspector.
-
-  // Build floor labels for the selector
-  const floorLabels = React.useMemo(() => {
-    if (!graph) return [];
-    const byFloor = new Map<number, FloorNode[]>();
-    for (const n of graph.nodes) {
-      if (!byFloor.has(n.floor_level)) byFloor.set(n.floor_level, []);
-      byFloor.get(n.floor_level)!.push(n);
-    }
-    return Array.from(byFloor.keys()).sort((a, b) => a - b);
-  }, [graph]);
-
-  // V2 legend info
-  const v2Info = massGraph ? {
-    location: massGraph.global.site.location,
-    nodes: massGraph.nodes.length,
-    relations: massGraph.relations.length,
-  } : null;
+  const handleExportStl = () => {
+    if (!graph) return;
+    const ref = sceneRef.current;
+    if (!ref) return;
+    const exporter = new STLExporter();
+    const stl = exporter.parse(ref.massGroup, { binary: false }) as string;
+    triggerDownload(stl, buildExportFilename(graph, "stl"), "model/stl");
+  };
 
   return (
-    <div ref={containerRef} style={{ width: "100%", height: "100%", position: "relative" }}>
-      {/* Floor Selector Strip (v1 only) */}
-      {graphVersion === 1 && graph && floorLabels.length > 0 && (
-        <div style={floorSelectorStyle}>
-          {floorLabels.slice().reverse().map((floor) => {
-            const label = floor < 0 ? `B${Math.abs(floor)}` : `${floor}F`;
-            const isSelected = selectedFloor === floor;
+    <div style={viewerShellStyle}>
+      <div style={canvasWrapStyle}>
+        <div style={exportBarStyle}>
+          <div style={variantBadgeStyle}>
+            {graph ? graph.resolved_model.variant_label : "No Variant"}
+          </div>
+          <button
+            type="button"
+            onClick={regenerateVariant}
+            style={exportButtonStyle}
+            disabled={!graph}
+          >
+            Regen
+          </button>
+          <button
+            type="button"
+            onClick={handleExportObj}
+            style={exportButtonStyle}
+            disabled={!graph}
+          >
+            Export OBJ
+          </button>
+          <button
+            type="button"
+            onClick={handleExportStl}
+            style={exportButtonStyle}
+            disabled={!graph}
+          >
+            Export STL
+          </button>
+        </div>
+        <div ref={containerRef} style={canvasStyle} />
+      </div>
+      <div style={snapshotRailStyle}>
+        <div style={snapshotRailHeaderStyle}>
+          <span style={snapshotRailTitleStyle}>Variant Snapshots</span>
+          <span style={snapshotRailMetaStyle}>{variantHistory.length} saved</span>
+        </div>
+        <div style={snapshotListStyle}>
+          {variantHistory.map((variant) => {
+            const active = variant.id === activeVariantId;
             return (
-              <div
-                key={floor}
-                onClick={() => {
-                  dispatch({ type: "SELECT_FLOOR", floor: isSelected ? null : floor });
-                }}
+              <button
+                key={variant.id}
+                type="button"
+                onClick={() => activateVariant(variant.id)}
                 style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                  cursor: "pointer",
-                  padding: "2px 4px",
-                  borderRadius: 2,
-                  background: isSelected ? "rgba(100,140,255,0.25)" : "transparent",
-                  transition: "background 0.15s",
+                  ...snapshotButtonStyle,
+                  borderColor: active ? "#dce7ff" : "#2a3445",
+                  boxShadow: active ? "0 0 0 1px rgba(220,231,255,0.24)" : "none",
                 }}
               >
-                <div
-                  style={{
-                    width: 18,
-                    height: 4,
-                    borderRadius: 1,
-                    background: isSelected
-                      ? "#6a8cff"
-                      : "rgba(100,120,160,0.35)",
-                    transition: "background 0.15s",
-                  }}
-                />
-                <span
-                  style={{
-                    fontSize: 8,
-                    fontFamily: "'SF Mono', monospace",
-                    color: isSelected ? "#8aacff" : "#556",
-                    lineHeight: 1,
-                    userSelect: "none",
-                  }}
-                >
-                  {label}
-                </span>
-              </div>
+                {variant.previewDataUrl ? (
+                  <img
+                    src={variant.previewDataUrl}
+                    alt={variant.label}
+                    style={snapshotImageStyle}
+                  />
+                ) : (
+                  <div style={snapshotPlaceholderStyle}>{variant.label}</div>
+                )}
+                <div style={snapshotCaptionStyle}>
+                  <span style={{ color: active ? "#f4f7ff" : "#dce7ff" }}>{variant.label}</span>
+                  <span style={{ color: "#74839b" }}>seed {variant.seed}</span>
+                </div>
+              </button>
             );
           })}
         </div>
-      )}
-      {/* Legend — v1 */}
-      {graphVersion === 1 && graph && (
-        <div style={legendStyle}>
-          <div style={{ fontSize: 9, color: "#777", marginBottom: 3 }}>
-            {graph.global.site.location}
-          </div>
-          <div style={{ fontSize: 8, color: "#555" }}>
-            {graph.nodes.length} nodes | {graph.edges.length} edges
-          </div>
-          <div style={{ fontSize: 8, color: "#556", marginTop: 2 }}>
-            {selectedFloor !== null && selectedFloor !== undefined
-              ? `Floor ${selectedFloor < 0 ? `B${Math.abs(selectedFloor)}` : `${selectedFloor}F`} selected`
-              : "Mass view"}
-          </div>
-        </div>
-      )}
-      {/* Export buttons — v2 */}
-      {graphVersion === 2 && massGraph && (
-        <div style={{ position: "absolute", top: 8, right: 8, display: "flex", gap: 4, zIndex: 10 }}>
-          <button onClick={() => sceneRef.current && exportOBJ(sceneRef.current.scene, "gim_model.obj")} style={exportBtnStyle}>
-            OBJ
-          </button>
-          <button onClick={() => sceneRef.current && exportSTL(sceneRef.current.scene, "gim_model.stl")} style={exportBtnStyle}>
-            STL
-          </button>
-        </div>
-      )}
-      {/* Legend — v2 */}
-      {graphVersion === 2 && v2Info && (
-        <div style={legendStyle}>
-          <div style={{ fontSize: 9, color: "#777", marginBottom: 3 }}>
-            {v2Info.location}
-          </div>
-          <div style={{ fontSize: 8, color: "#555" }}>
-            {v2Info.nodes} masses | {v2Info.relations} relations
-          </div>
-          <div style={{ fontSize: 8, color: "#4488cc", marginTop: 2 }}>
-            SpatialMassGraph v2
-          </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 }
 
-// ============================================================
-// Floor Selector Style
-// ============================================================
-
-const floorSelectorStyle: React.CSSProperties = {
-  position: "absolute",
-  left: 8,
-  top: "50%",
-  transform: "translateY(-50%)",
+const viewerShellStyle: React.CSSProperties = {
+  width: "100%",
+  height: "100%",
   display: "flex",
   flexDirection: "column",
-  gap: 1,
-  background: "rgba(20,22,30,0.85)",
-  border: "1px solid #2a3040",
-  borderRadius: 4,
-  padding: "6px 4px",
-  zIndex: 10,
-  maxHeight: "70%",
-  overflowY: "auto",
+  minHeight: 0,
 };
 
-// ============================================================
-// V2: SpatialMassGraph 3D Rendering
-// ============================================================
-
-const SKIN_MATERIALS: Record<string, Partial<THREE.MeshPhysicalMaterialParameters>> = {
-  glass:     { roughness: 0.05, metalness: 0.3, transparent: true, opacity: 0.55, clearcoat: 0.8 },
-  stone:     { roughness: 0.85, metalness: 0.05, transparent: false },
-  metal:     { roughness: 0.15, metalness: 0.75, transparent: false },
-  concrete:  { roughness: 0.7, metalness: 0.1, transparent: false },
-  composite: { roughness: 0.4, metalness: 0.3, transparent: true, opacity: 0.7 },
+const canvasWrapStyle: React.CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  position: "relative",
 };
 
-const POROSITY_FACTOR: Record<string, number> = {
-  solid: 1.0,
-  porous: 0.7,
-  open: 0.4,
-  transparent: 0.3,
-};
-
-interface MassPlacement {
-  node: MassNode;
-  x: number;
-  y: number;
-  z: number;
-  w: number;
-  h: number;
-  d: number;
-}
-
-function solveMassConstraints(massGraph: SpatialMassGraph): MassPlacement[] {
-  const nodes = massGraph.nodes;
-  const relations = massGraph.relations;
-  const avgFloorH = 3.8;
-
-  // Place each node based on floor_range → Y, then spread on X/Z
-  const placements = new Map<string, MassPlacement>();
-
-  // Initial placement: Y from floor_range, X/Z from hint dimensions
-  for (const node of nodes) {
-    const hint = node.geometry.scale.hint;
-    const w = hint.width || 15;
-    const d = hint.depth || 15;
-    const h = hint.height || ((node.floor_range[1] - node.floor_range[0] + 1) * avgFloorH);
-    const yBase = node.floor_range[0] * avgFloorH;
-
-    placements.set(node.id, { node, x: 0, y: yBase, z: 0, w, h, d });
-  }
-
-  // Topological sort for stack relations (above/below)
-  const stackEdges = relations.filter((r) => r.family === "stack");
-  const inDegree = new Map<string, number>();
-  const adj = new Map<string, string[]>();
-  for (const n of nodes) {
-    inDegree.set(n.id, 0);
-    adj.set(n.id, []);
-  }
-  for (const e of stackEdges) {
-    if (e.rule === "above" || e.rule === "floating") {
-      // source is above target
-      adj.get(e.target)?.push(e.source);
-      inDegree.set(e.source, (inDegree.get(e.source) || 0) + 1);
-    } else if (e.rule === "below") {
-      adj.get(e.source)?.push(e.target);
-      inDegree.set(e.target, (inDegree.get(e.target) || 0) + 1);
-    }
-  }
-
-  // BFS topological sort for Y placement
-  const queue: string[] = [];
-  for (const [id, deg] of inDegree) {
-    if (deg === 0) queue.push(id);
-  }
-  while (queue.length > 0) {
-    const cur = queue.shift()!;
-    const curP = placements.get(cur)!;
-    for (const next of adj.get(cur) || []) {
-      const nextP = placements.get(next)!;
-      // Stack above: next sits on top of cur
-      nextP.y = Math.max(nextP.y, curP.y + curP.h);
-      inDegree.set(next, (inDegree.get(next) || 0) - 1);
-      if (inDegree.get(next) === 0) queue.push(next);
-    }
-  }
-
-  // X/Z spread: contact/adjacent relations push nodes apart, alignment pulls them together
-  // Simple force-based iteration
-  const placementArr = Array.from(placements.values());
-  for (let iter = 0; iter < 30; iter++) {
-    // Repulsion between overlapping nodes at same Y range
-    for (let i = 0; i < placementArr.length; i++) {
-      for (let j = i + 1; j < placementArr.length; j++) {
-        const a = placementArr[i];
-        const b = placementArr[j];
-
-        // Check Y overlap
-        const aTop = a.y + a.h;
-        const bTop = b.y + b.h;
-        const yOverlap = Math.min(aTop, bTop) - Math.max(a.y, b.y);
-        if (yOverlap <= 0) continue;
-
-        const dx = b.x - a.x;
-        const dz = b.z - a.z;
-        const dist = Math.sqrt(dx * dx + dz * dz) || 0.1;
-        const minDist = (a.w + b.w) / 2 + 2;
-
-        if (dist < minDist) {
-          const push = (minDist - dist) * 0.3;
-          const nx = dx / dist;
-          const nz = dz / dist;
-          a.x -= nx * push;
-          a.z -= nz * push;
-          b.x += nx * push;
-          b.z += nz * push;
-        }
-      }
-    }
-
-    // Contact relations: keep nodes touching
-    for (const rel of relations) {
-      if (rel.family !== "contact" && rel.family !== "connection") continue;
-      const a = placements.get(rel.source);
-      const b = placements.get(rel.target);
-      if (!a || !b) continue;
-
-      const dx = b.x - a.x;
-      const dz = b.z - a.z;
-      const dist = Math.sqrt(dx * dx + dz * dz) || 0.1;
-      const targetDist = (a.w + b.w) / 2 + 1;
-
-      if (dist > targetDist) {
-        const pull = (dist - targetDist) * 0.15;
-        const nx = dx / dist;
-        const nz = dz / dist;
-        a.x += nx * pull;
-        a.z += nz * pull;
-        b.x -= nx * pull;
-        b.z -= nz * pull;
-      }
-    }
-
-    // Alignment: pull X or Z together
-    for (const rel of relations) {
-      if (rel.family !== "alignment") continue;
-      const a = placements.get(rel.source);
-      const b = placements.get(rel.target);
-      if (!a || !b) continue;
-
-      if (rel.rule === "axis") {
-        // Align on X axis
-        const mid = (a.x + b.x) / 2;
-        a.x += (mid - a.x) * 0.2;
-        b.x += (mid - b.x) * 0.2;
-      } else if (rel.rule === "offset") {
-        // Align on Z axis
-        const mid = (a.z + b.z) / 2;
-        a.z += (mid - a.z) * 0.2;
-        b.z += (mid - b.z) * 0.2;
-      }
-    }
-
-    // Stack relations: align X/Z for stacked nodes
-    for (const rel of stackEdges) {
-      const a = placements.get(rel.source);
-      const b = placements.get(rel.target);
-      if (!a || !b) continue;
-      // Pull X/Z together
-      a.x += (b.x - a.x) * 0.15;
-      a.z += (b.z - a.z) * 0.15;
-      b.x += (a.x - b.x) * 0.15;
-      b.z += (a.z - b.z) * 0.15;
-    }
-  }
-
-  // Center everything
-  let cx = 0, cz = 0;
-  for (const p of placementArr) { cx += p.x; cz += p.z; }
-  cx /= placementArr.length || 1;
-  cz /= placementArr.length || 1;
-  for (const p of placementArr) { p.x -= cx; p.z -= cz; }
-
-  return placementArr;
-}
-
-function buildMassGraphEnvironment(scene: THREE.Scene, massGraph: SpatialMassGraph) {
-  const [siteW, siteD] = massGraph.global.site.dimensions;
-
-  // Ground
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(200, 200),
-    new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.95, metalness: 0.0 }),
-  );
-  ground.rotation.x = -Math.PI / 2;
-  ground.position.y = -0.1;
-  ground.receiveShadow = true;
-  scene.add(ground);
-
-  // Site boundary
-  const hw = siteW / 2, hd = siteD / 2;
-  const sitePts = [
-    new THREE.Vector3(-hw, 0.02, -hd), new THREE.Vector3(hw, 0.02, -hd),
-    new THREE.Vector3(hw, 0.02, hd), new THREE.Vector3(-hw, 0.02, hd),
-    new THREE.Vector3(-hw, 0.02, -hd),
-  ];
-  scene.add(new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints(sitePts),
-    new THREE.LineBasicMaterial({ color: 0x2a3040, transparent: true, opacity: 0.4 }),
-  ));
-
-  // Grid
-  const grid = new THREE.GridHelper(100, 20, 0x1a1e28, 0x0e1018);
-  grid.position.y = 0.01;
-  scene.add(grid);
-
-  // Context labels
-  const ctx = massGraph.global.site.context;
-  const labelDirs: [string, THREE.Vector3][] = [
-    [ctx.north, new THREE.Vector3(0, 1.5, hd + 8)],
-    [ctx.south, new THREE.Vector3(0, 1.5, -(hd + 8))],
-    [ctx.east, new THREE.Vector3(hw + 8, 1.5, 0)],
-    [ctx.west, new THREE.Vector3(-(hw + 8), 1.5, 0)],
-  ];
-  for (const [label, pos] of labelDirs) {
-    if (!label) continue;
-    const txt = label.length > 15 ? label.slice(0, 15) + "…" : label;
-    const sprite = makeLabel(txt, 0x6a7088);
-    sprite.position.copy(pos);
-    sprite.scale.set(10, 3.5, 1);
-    scene.add(sprite);
-  }
-
-  const nSprite = makeLabel("N", 0x7088cc);
-  nSprite.position.set(0, 2.5, hd + 4);
-  nSprite.scale.set(3, 2, 1);
-  scene.add(nSprite);
-}
-
-function createMassGeometry(primitive: string, w: number, h: number, d: number): THREE.BufferGeometry {
-  switch (primitive) {
-    case "tower":
-      return new THREE.BoxGeometry(w * 0.6, h, d * 0.6);
-    case "plate":
-      return new THREE.BoxGeometry(w * 1.2, h, d * 1.2);
-    case "bar":
-      return new THREE.BoxGeometry(w * 1.5, h, d * 0.5);
-    case "ring": {
-      const outer = Math.max(w, d) * 0.6;
-      const inner = outer * 0.6;
-      const shape = new THREE.Shape();
-      shape.absarc(0, 0, outer, 0, Math.PI * 2, false);
-      const hole = new THREE.Path();
-      hole.absarc(0, 0, inner, 0, Math.PI * 2, true);
-      shape.holes.push(hole);
-      const geo = new THREE.ExtrudeGeometry(shape, { depth: h, bevelEnabled: false });
-      geo.rotateX(-Math.PI / 2);
-      return geo;
-    }
-    case "bridge":
-      return new THREE.BoxGeometry(w * 1.8, h * 0.4, d * 0.4);
-    default: // block
-      return new THREE.BoxGeometry(w, h, d);
-  }
-}
-
-function createMassMaterial(node: MassNode, massIndex?: number): THREE.MeshPhysicalMaterial {
-  const baseColor = massIndex !== undefined ? getMassIdentityColorHex(massIndex) : (MASS_TYPE_COLORS_HEX[node.type] || 0x555555);
-  const skinParams = SKIN_MATERIALS[node.geometry.skin] || SKIN_MATERIALS.concrete;
-  const porosityFactor = POROSITY_FACTOR[node.geometry.porosity] || 1.0;
-
-  const params: THREE.MeshPhysicalMaterialParameters = {
-    color: baseColor,
-    emissive: 0x141c28,
-    emissiveIntensity: 0.08,
-    side: THREE.FrontSide,
-    ...skinParams,
-  };
-
-  if (params.opacity !== undefined) {
-    params.opacity = params.opacity * porosityFactor;
-    params.transparent = params.opacity < 1.0;
-  }
-
-  if (node.type === "void") {
-    params.transparent = true;
-    params.opacity = 0.25;
-    params.wireframe = false;
-    params.side = THREE.DoubleSide;
-  }
-
-  return new THREE.MeshPhysicalMaterial(params);
-}
-
-function buildMassGraphVolumes(
-  ref: SceneState,
-  massGraph: SpatialMassGraph,
-  dispatch: React.Dispatch<import("@/lib/graph-context").GraphAction>,
-) {
-  const placements = solveMassConstraints(massGraph);
-  const massGroup = ref.massGroup;
-
-  // Raycaster for click detection
-  const raycaster = new THREE.Raycaster();
-  const mouse = new THREE.Vector2();
-
-  for (let pi = 0; pi < placements.length; pi++) {
-    const p = placements[pi];
-    const massIndex = massGraph.nodes.findIndex((n) => n.id === p.node.id);
-    const geo = createMassGeometry(p.node.geometry.primitive, p.w, p.h, p.d);
-    const mat = createMassMaterial(p.node, massIndex >= 0 ? massIndex : pi);
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.position.set(p.x, p.y + p.h / 2, p.z);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    mesh.userData.nodeId = p.node.id;
-    mesh.userData.massOriginalOpacity = mat.opacity ?? 1.0;
-    massGroup.add(mesh);
-    ref.nodeMeshes.set(p.node.id, mesh);
-    ref.selectables.push(mesh);
-
-    // Void: add wireframe overlay (hidden by default, shown on selection)
-    if (p.node.type === "void") {
-      const wireGeo = new THREE.EdgesGeometry(geo);
-      const wireMat = new THREE.LineBasicMaterial({ color: 0xff4444, transparent: true, opacity: 0.8, linewidth: 2 });
-      const wire = new THREE.LineSegments(wireGeo, wireMat);
-      wire.position.copy(mesh.position);
-      wire.userData.voidWireframe = true;
-      wire.userData.nodeId = p.node.id;
-      wire.visible = false;
-      massGroup.add(wire);
-    }
-
-    // Label
-    const label = makeLabel(p.node.label, 0xcccccc);
-    label.position.set(p.x, p.y + p.h + 2, p.z);
-    label.scale.set(6, 2.5, 1);
-    massGroup.add(label);
-  }
-
-  // Draw relation lines
-  const RELATION_COLORS: Record<string, number> = {
-    stack: 0x5566aa,
-    contact: 0x55aa66,
-    enclosure: 0xffaa66,
-    intersection: 0xff6666,
-    connection: 0x66aaff,
-    alignment: 0x66ffaa,
-  };
-
-  for (const rel of massGraph.relations) {
-    const srcP = placements.find((p) => p.node.id === rel.source);
-    const tgtP = placements.find((p) => p.node.id === rel.target);
-    if (!srcP || !tgtP) continue;
-
-    const pts = [
-      new THREE.Vector3(srcP.x, srcP.y + srcP.h / 2, srcP.z),
-      new THREE.Vector3(tgtP.x, tgtP.y + tgtP.h / 2, tgtP.z),
-    ];
-    const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
-    const lineMat = new THREE.LineBasicMaterial({
-      color: RELATION_COLORS[rel.family] || 0x444444,
-      transparent: true,
-      opacity: rel.strength === "hard" ? 0.6 : 0.3,
-    });
-    if (rel.strength === "soft") {
-      // Dashed line for soft relations
-      const dashedMat = new THREE.LineDashedMaterial({
-        color: RELATION_COLORS[rel.family] || 0x444444,
-        transparent: true,
-        opacity: 0.3,
-        dashSize: 1.5,
-        gapSize: 1,
-      });
-      const line = new THREE.Line(lineGeo, dashedMat);
-      line.computeLineDistances();
-      massGroup.add(line);
-    } else {
-      massGroup.add(new THREE.Line(lineGeo, lineMat));
-    }
-  }
-
-  ref.scene.add(massGroup);
-
-  // Click handler
-  const container = ref.renderer.domElement;
-  const onClick = (event: MouseEvent) => {
-    const rect = container.getBoundingClientRect();
-    mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-    mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-    raycaster.setFromCamera(mouse, ref.camera);
-    const hits = raycaster.intersectObjects(ref.selectables, false);
-    if (hits.length > 0) {
-      const nodeId = findNodeId(hits[0].object);
-      if (nodeId) dispatch({ type: "SELECT_NODE", nodeId });
-    } else {
-      dispatch({ type: "SELECT_NODE", nodeId: null });
-    }
-  };
-  container.addEventListener("click", onClick);
-}
-
-// ============================================================
-// V1: Environment
-// ============================================================
-
-function buildEnvironment(scene: THREE.Scene, graph: VerticalNodeGraph) {
-  const [siteW, siteD] = graph.global.site.dimensions;
-
-  // Ground
-  const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(200, 200),
-    new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.95, metalness: 0.0 }),
-  );
-  ground.rotation.x = -Math.PI / 2;
-  ground.position.y = -0.1;
-  ground.receiveShadow = true;
-  scene.add(ground);
-
-  // Site boundary
-  const hw = siteW / 2, hd = siteD / 2;
-  const sitePts = [
-    new THREE.Vector3(-hw, 0.02, -hd), new THREE.Vector3(hw, 0.02, -hd),
-    new THREE.Vector3(hw, 0.02, hd), new THREE.Vector3(-hw, 0.02, hd),
-    new THREE.Vector3(-hw, 0.02, -hd),
-  ];
-  scene.add(new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints(sitePts),
-    new THREE.LineBasicMaterial({ color: 0x2a3040, transparent: true, opacity: 0.4 }),
-  ));
-
-  // Grid
-  const grid = new THREE.GridHelper(100, 20, 0x1a1e28, 0x0e1018);
-  grid.position.y = 0.01;
-  scene.add(grid);
-
-  // Context labels
-  const ctx = graph.global.site.context;
-  const labelDirs: [string, THREE.Vector3][] = [
-    [ctx.north, new THREE.Vector3(0, 1.5, hd + 8)],
-    [ctx.south, new THREE.Vector3(0, 1.5, -(hd + 8))],
-    [ctx.east, new THREE.Vector3(hw + 8, 1.5, 0)],
-    [ctx.west, new THREE.Vector3(-(hw + 8), 1.5, 0)],
-  ];
-  for (const [label, pos] of labelDirs) {
-    if (!label) continue;
-    const txt = label.length > 15 ? label.slice(0, 15) + "…" : label;
-    const sprite = makeLabel(txt, 0x6a7088);
-    sprite.position.copy(pos);
-    sprite.scale.set(10, 3.5, 1);
-    scene.add(sprite);
-  }
-
-  // North indicator
-  const nSprite = makeLabel("N", 0x7088cc);
-  nSprite.position.set(0, 2.5, hd + 4);
-  nSprite.scale.set(3, 2, 1);
-  scene.add(nSprite);
-}
-
-// ============================================================
-// Building — Compute + Mass View
-// ============================================================
-
-function buildBuilding(ref: SceneState, graph: VerticalNodeGraph) {
-  const { scene } = ref;
-  const [siteW, siteD] = graph.global.site.dimensions;
-  const bcr = graph.global.site.bcr / 100;
-
-  // Base footprint from site + BCR
-  const footprintArea = siteW * siteD * bcr;
-  const baseW = Math.sqrt(footprintArea * (siteW / siteD));
-  const baseD = footprintArea / baseW;
-
-  // Get dominant architect FormDNA
-  const allStyles = graph.nodes.map((n) => n.style_ref);
-  const dominantDNA = getDominantFormDNA(allStyles);
-
-  // Organize by floor
-  const nodesByFloor = new Map<number, FloorNode[]>();
-  for (const n of graph.nodes) {
-    if (!nodesByFloor.has(n.floor_level)) nodesByFloor.set(n.floor_level, []);
-    nodesByFloor.get(n.floor_level)!.push(n);
-  }
-  const floors = Array.from(nodesByFloor.keys()).sort((a, b) => a - b);
-  const aboveGroundFloors = floors.filter((f) => f >= 0);
-  const totalAbove = aboveGroundFloors.length;
-
-  // Compute cumulative Y positions
-  const floorY = new Map<number, number>();
-  const floorH = new Map<number, number>();
-  let cumY = 0;
-  for (const floor of floors) {
-    const nodes = nodesByFloor.get(floor)!;
-    const zone = nodes[0]?.floor_zone || "middle";
-    const h = nodes[0]?.ceiling_height || DEFAULT_CEILING[zone] || 3.8;
-    floorH.set(floor, h);
-    if (floor < 0) {
-      floorY.set(floor, -(Math.abs(floor)) * h);
-    } else {
-      floorY.set(floor, cumY);
-      cumY += h;
-    }
-  }
-
-  const coreR = Math.min(baseW, baseD) * 0.04;
-
-  // ---- Compute phase: build FloorBuildData[] ----
-  const floorDataArr: FloorBuildData[] = [];
-
-  for (let fi = 0; fi < floors.length; fi++) {
-    const floor = floors[fi];
-    const nodes = nodesByFloor.get(floor)!;
-    const zone = nodes[0]?.floor_zone || "middle";
-    const y = floorY.get(floor)!;
-    const h = floorH.get(floor)!;
-
-    const floorStyle = nodes.find((n) => n.style_ref && n.style_ref !== "none")?.style_ref;
-    const floorDNA = getFloorFormDNA(floorStyle, dominantDNA);
-
-    const aboveIdx = floor < 0 ? 0 : aboveGroundFloors.indexOf(floor);
-
-    const groundScale = floor <= 1 ? floorDNA.groundExpansion : 1;
-    const fW = baseW * groundScale;
-    const fD = baseD * groundScale;
-
-    const precomputed = nodes[0]?.geometry;
-    const outline = precomputed?.outline ?? generateFloorOutline(floorDNA, fW, fD, aboveIdx, totalAbove);
-
-    const hasTerrace = floor > 0 && shouldHaveTerrace(floorDNA, aboveIdx, totalAbove);
-
-    floorDataArr.push({
-      floor,
-      y,
-      h,
-      zone,
-      outline,
-      floorDNA,
-      nodes,
-      baseW: fW,
-      baseD: fD,
-      coreR,
-      hasTerrace,
-      aboveIdx,
-      totalAbove,
-    });
-  }
-
-  ref.floorData = floorDataArr;
-
-  // ---- Build Mass View ----
-  buildMassView(ref, graph, floorDataArr, dominantDNA, baseW, baseD, aboveGroundFloors, floorY, floorH, nodesByFloor);
-}
-
-// ============================================================
-// Mass View — Shell + Roof + Canopy only
-// ============================================================
-
-function buildMassView(
-  ref: SceneState,
-  graph: VerticalNodeGraph,
-  floorDataArr: FloorBuildData[],
-  dominantDNA: ArchitectFormDNA,
-  baseW: number,
-  baseD: number,
-  aboveGroundFloors: number[],
-  floorY: Map<number, number>,
-  floorH: Map<number, number>,
-  nodesByFloor: Map<number, FloorNode[]>,
-) {
-  const massGroup = ref.massGroup;
-  const totalAbove = aboveGroundFloors.length;
-
-  // Collect shell sections from above-ground floors (with zone for coloring)
-  const shellSections: { y: number; outline: [number, number][]; zone: string }[] = [];
-
-  for (const fd of floorDataArr) {
-    if (fd.floor < 0) continue;
-    const wallOutline = fd.hasTerrace
-      ? applyTerraceInset(fd.outline, fd.floorDNA.terraceDepth, fd.aboveIdx)
-      : fd.outline;
-    shellSections.push({ y: fd.y, outline: wallOutline, zone: fd.zone });
-  }
-
-  // ---- Loft surface (zone-colored, single layer) ----
-  buildLoftSurfaceToGroup(massGroup, dominantDNA, baseW, baseD, aboveGroundFloors, floorY, floorH, nodesByFloor);
-
-  // ---- Roof treatment ----
-  const floors = floorDataArr.map((fd) => fd.floor).sort((a, b) => a - b);
-  const topFloor = floors[floors.length - 1];
-  const topY = (floorY.get(topFloor) || 0) + (floorH.get(topFloor) || 3);
-  addRoofTreatmentToGroup(massGroup, dominantDNA, baseW, baseD, topY, totalAbove);
-
-  // ---- Entrance canopy ----
-  const groundY = floorY.get(0) ?? floorY.get(1) ?? 0;
-  const groundH = floorH.get(0) ?? floorH.get(1) ?? 5;
-  const canopyGeo = new THREE.BoxGeometry(baseW * 0.35, 0.12, 3.5);
-  const canopyMat = new THREE.MeshStandardMaterial({
-    color: 0x404858, roughness: 0.25, metalness: 0.4,
-  });
-  const canopy = new THREE.Mesh(canopyGeo, canopyMat);
-  canopy.position.set(0, groundY + groundH * 0.65, -(baseD / 2 + 1.8));
-  canopy.castShadow = true;
-  massGroup.add(canopy);
-
-  ref.scene.add(massGroup);
-}
-
-// ============================================================
-// Floor Detail Builder — on-demand per floor
-// ============================================================
-
-function buildFloorDetail(
-  ref: SceneState,
-  fd: FloorBuildData,
-  isSelected: boolean,
-): THREE.Group {
-  const group = new THREE.Group();
-  const opacity = isSelected ? 1.0 : 0.3;
-
-  // ---- Slab ----
-  const slabThick = 0.3;
-  const slabShape = outlineToShape(fd.outline);
-  const slabGeo = new THREE.ExtrudeGeometry(slabShape, { depth: slabThick, bevelEnabled: false });
-  slabGeo.rotateX(-Math.PI / 2);
-
-  const slabColor = fd.zone === "basement" ? 0x2a2c34 : fd.floor === 0 ? 0x3a3e4a : 0x303440;
-  const slabMat = new THREE.MeshStandardMaterial({
-    color: slabColor, roughness: 0.6, metalness: 0.15,
-    emissive: 0x101418, emissiveIntensity: 0.03,
-    transparent: !isSelected,
-    opacity,
-  });
-  const slab = new THREE.Mesh(slabGeo, slabMat);
-  slab.position.y = fd.y;
-  slab.castShadow = true;
-  slab.receiveShadow = true;
-  group.add(slab);
-
-  // ---- Floor label (only for selected floor) ----
-  if (isSelected) {
-    const label = fd.floor < 0 ? `B${Math.abs(fd.floor)}` : `${fd.floor}F`;
-    const sprite = makeLabel(label, 0x6a7890);
-    const labelX = fd.baseW / 2 + 3;
-    sprite.position.set(labelX, fd.y + fd.h / 2, 0);
-    sprite.scale.set(4, 2, 1);
-    group.add(sprite);
-  }
-
-  return group;
-}
-
-// ============================================================
-// Continuous Exterior Shell (to group variant)
-// ============================================================
-
-const ZONE_SHELL_COLORS: Record<string, [number, number, number]> = {
-  basement:  [0.30, 0.26, 0.20],
-  ground:    [0.50, 0.42, 0.30],
-  lower:     [0.32, 0.50, 0.38],
-  middle:    [0.32, 0.42, 0.60],
-  upper:     [0.42, 0.35, 0.60],
-  penthouse: [0.60, 0.42, 0.30],
-  rooftop:   [0.45, 0.52, 0.35],
-};
-
-function buildContinuousShellToGroup(
-  group: THREE.Group,
-  sections: { y: number; outline: [number, number][]; zone: string }[],
-  dna: ArchitectFormDNA,
-) {
-  if (sections.length < 2) return;
-
-  const targetPts = 40;
-  const normalized = sections.map((s) => ({
-    y: s.y,
-    pts: normalizeOutline(s.outline, targetPts),
-    zone: s.zone,
-  }));
-
-  const rows = normalized.length;
-  const cols = targetPts;
-  const positions = new Float32Array(rows * cols * 3);
-  const colors = new Float32Array(rows * cols * 3);
-
-  for (let r = 0; r < rows; r++) {
-    const sec = normalized[r];
-    const zoneColor = ZONE_SHELL_COLORS[sec.zone] || ZONE_SHELL_COLORS.middle;
-    for (let c = 0; c < cols; c++) {
-      const idx = (r * cols + c) * 3;
-      positions[idx]     = sec.pts[c][0];
-      positions[idx + 1] = sec.y;
-      positions[idx + 2] = sec.pts[c][1];
-      colors[idx]     = zoneColor[0];
-      colors[idx + 1] = zoneColor[1];
-      colors[idx + 2] = zoneColor[2];
-    }
-  }
-
-  const indices: number[] = [];
-  for (let r = 0; r < rows - 1; r++) {
-    for (let c = 0; c < cols; c++) {
-      const c1 = (c + 1) % cols;
-      const a = r * cols + c;
-      const b = r * cols + c1;
-      const d = (r + 1) * cols + c;
-      const e = (r + 1) * cols + c1;
-      indices.push(a, d, b);
-      indices.push(b, d, e);
-    }
-  }
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-  geo.setIndex(indices);
-  geo.computeVertexNormals();
-
-  const mat = new THREE.MeshPhysicalMaterial({
-    vertexColors: true,
-    transparent: false,
-    roughness: Math.max(dna.facadeRoughness * 0.7, 0.08),
-    metalness: Math.min(dna.facadeMetalness + 0.1, 0.75),
-    side: THREE.FrontSide,
-    clearcoat: dna.facadeOpacity > 0.4 ? 0.5 : 0.15,
-    clearcoatRoughness: 0.1,
-    emissive: 0x141c28,
-    emissiveIntensity: 0.15,
-  });
-
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  mesh.userData.massOriginalOpacity = 1.0;
-  group.add(mesh);
-}
-
-// ============================================================
-// Loft Surface (to group variant)
-// ============================================================
-
-function buildLoftSurfaceToGroup(
-  group: THREE.Group,
-  dna: ArchitectFormDNA,
-  baseW: number,
-  baseD: number,
-  aboveGroundFloors: number[],
-  floorY: Map<number, number>,
-  floorH: Map<number, number>,
-  nodesByFloor: Map<number, FloorNode[]>,
-) {
-  if (aboveGroundFloors.length < 2) return;
-
-  const totalAbove = aboveGroundFloors.length;
-  const targetPts = 32;
-
-  interface CrossSection {
-    y: number;
-    outline: [number, number][];
-    zone: string;
-  }
-
-  const sections: CrossSection[] = [];
-
-  for (let fi = 0; fi < aboveGroundFloors.length; fi++) {
-    const floor = aboveGroundFloors[fi];
-    const y = floorY.get(floor)!;
-    const h = floorH.get(floor)!;
-    const nodes = nodesByFloor.get(floor)!;
-
-    const floorStyle = nodes.find((n) => n.style_ref && n.style_ref !== "none")?.style_ref;
-    const floorDNA = getFloorFormDNA(floorStyle, dna);
-    const groundScale = floor <= 1 ? floorDNA.groundExpansion : 1;
-
-    const outline = generateFloorOutline(floorDNA, baseW * groundScale, baseD * groundScale, fi, totalAbove);
-    const zone = nodes[0]?.floor_zone || "middle";
-
-    sections.push({ y, outline: normalizeOutline(outline, targetPts), zone });
-    sections.push({ y: y + h, outline: normalizeOutline(outline, targetPts), zone });
-  }
-
-  if (sections.length < 2) return;
-
-  const isSculptural = dna.transitionStyle === "sculptural";
-  const interpSegs = isSculptural ? 6 : 4;
-
-  const allSections: CrossSection[] = [];
-
-  for (let si = 0; si < sections.length - 1; si++) {
-    const s0 = sections[Math.max(0, si - 1)];
-    const s1 = sections[si];
-    const s2 = sections[si + 1];
-    const s3 = sections[Math.min(sections.length - 1, si + 2)];
-
-    allSections.push(s1);
-
-    for (let t = 1; t < interpSegs; t++) {
-      const frac = t / interpSegs;
-      const interpY = catmullRom(s0.y, s1.y, s2.y, s3.y, frac);
-      const interpOutline: [number, number][] = [];
-
-      for (let p = 0; p < targetPts; p++) {
-        const x = catmullRom(s0.outline[p][0], s1.outline[p][0], s2.outline[p][0], s3.outline[p][0], frac);
-        const z = catmullRom(s0.outline[p][1], s1.outline[p][1], s2.outline[p][1], s3.outline[p][1], frac);
-        interpOutline.push([x, z]);
-      }
-
-      allSections.push({ y: interpY, outline: interpOutline, zone: s1.zone });
-    }
-  }
-  allSections.push(sections[sections.length - 1]);
-
-  const rows = allSections.length;
-  const cols = targetPts;
-  const vertexCount = rows * cols;
-  const positions = new Float32Array(vertexCount * 3);
-  const colors = new Float32Array(vertexCount * 3);
-
-  for (let r = 0; r < rows; r++) {
-    const sec = allSections[r];
-    const zoneColor = ZONE_SHELL_COLORS[sec.zone] || ZONE_SHELL_COLORS.middle;
-    for (let c = 0; c < cols; c++) {
-      const idx = (r * cols + c) * 3;
-      positions[idx] = sec.outline[c][0];
-      positions[idx + 1] = sec.y;
-      positions[idx + 2] = sec.outline[c][1];
-      colors[idx]     = zoneColor[0];
-      colors[idx + 1] = zoneColor[1];
-      colors[idx + 2] = zoneColor[2];
-    }
-  }
-
-  const indices: number[] = [];
-  for (let r = 0; r < rows - 1; r++) {
-    for (let c = 0; c < cols; c++) {
-      const c1 = (c + 1) % cols;
-      const a = r * cols + c;
-      const b = r * cols + c1;
-      const d = (r + 1) * cols + c;
-      const e = (r + 1) * cols + c1;
-      indices.push(a, d, b);
-      indices.push(b, d, e);
-    }
-  }
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-  geo.setIndex(indices);
-  geo.computeVertexNormals();
-
-  const mat = new THREE.MeshPhysicalMaterial({
-    vertexColors: true,
-    transparent: false,
-    roughness: dna.facadeRoughness * 0.8,
-    metalness: Math.min(dna.facadeMetalness + 0.15, 0.8),
-    side: THREE.DoubleSide,
-    clearcoat: 0.3,
-    clearcoatRoughness: 0.15,
-    emissive: 0x141c28,
-    emissiveIntensity: 0.12,
-  });
-
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  mesh.userData.massOriginalOpacity = 1.0;
-  group.add(mesh);
-
-  // Wireframe overlay
-  const wireGeo = new THREE.WireframeGeometry(geo);
-  const wireMat = new THREE.LineBasicMaterial({
-    color: 0x506080,
-    transparent: true,
-    opacity: 0.10,
-  });
-  const wireframe = new THREE.LineSegments(wireGeo, wireMat);
-  group.add(wireframe);
-}
-
-// ============================================================
-// Roof Treatment (to group variant)
-// ============================================================
-
-function addRoofTreatmentToGroup(group: THREE.Group, dna: ArchitectFormDNA, baseW: number, baseD: number, topY: number, totalFloors: number) {
-  const outline = generateFloorOutline(dna, baseW, baseD, totalFloors - 1, totalFloors);
-
-  switch (dna.roofStyle) {
-    case "garden": {
-      const shape = outlineToShape(outline);
-      const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.2, bevelEnabled: false });
-      geo.rotateX(-Math.PI / 2);
-      const mat = new THREE.MeshStandardMaterial({
-        color: 0x3a6a3a, roughness: 0.65, metalness: 0.05,
-        emissive: 0x2a4a2a, emissiveIntensity: 0.08,
-      });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.y = topY + 0.1;
-      mesh.receiveShadow = true;
-      group.add(mesh);
-      break;
-    }
-    case "crown": {
-      const shape = outlineToShape(outline.map(([x, z]) => [x * 0.85, z * 0.85] as [number, number]));
-      const geo = new THREE.ExtrudeGeometry(shape, { depth: 2.5, bevelEnabled: true, bevelSize: 0.3, bevelThickness: 0.3 });
-      geo.rotateX(-Math.PI / 2);
-      const mat = new THREE.MeshStandardMaterial({
-        color: 0x505878, roughness: 0.25, metalness: 0.55,
-        emissive: 0x2a2a48, emissiveIntensity: 0.06,
-      });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.y = topY;
-      mesh.castShadow = true;
-      group.add(mesh);
-      break;
-    }
-    case "sculptural": {
-      const geo = new THREE.SphereGeometry(Math.min(baseW, baseD) * 0.15, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2);
-      const mat = new THREE.MeshStandardMaterial({
-        color: 0x505868, roughness: 0.35, metalness: 0.35,
-        emissive: 0x252838, emissiveIntensity: 0.06,
-      });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.y = topY;
-      mesh.castShadow = true;
-      group.add(mesh);
-      break;
-    }
-    case "sloped": {
-      const shape = outlineToShape(outline);
-      const geo = new THREE.ExtrudeGeometry(shape, { depth: 3.0, bevelEnabled: true, bevelSize: 1.5, bevelSegments: 3, bevelThickness: 1.5 });
-      geo.rotateX(-Math.PI / 2);
-      geo.scale(1, 0.5, 1);
-      const mat = new THREE.MeshStandardMaterial({
-        color: 0x404858, roughness: 0.45, metalness: 0.25,
-      });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.y = topY;
-      mesh.castShadow = true;
-      group.add(mesh);
-      break;
-    }
-    default: {
-      const shape = outlineToShape(outline);
-      const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.8, bevelEnabled: false });
-      geo.rotateX(-Math.PI / 2);
-      const edges = new THREE.EdgesGeometry(geo);
-      const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({
-        color: 0x4a5068, transparent: true, opacity: 0.45,
-      }));
-      line.position.y = topY;
-      group.add(line);
-    }
-  }
-}
-
-// ============================================================
-// Original utility functions (kept unchanged)
-// ============================================================
-
-function buildContinuousShell(
-  scene: THREE.Scene,
-  sections: { y: number; outline: [number, number][] }[],
-  dna: ArchitectFormDNA,
-) {
-  if (sections.length < 2) return;
-
-  const targetPts = 40;
-  const normalized = sections.map((s) => ({
-    y: s.y,
-    pts: normalizeOutline(s.outline, targetPts),
-  }));
-
-  const rows = normalized.length;
-  const cols = targetPts;
-  const positions = new Float32Array(rows * cols * 3);
-
-  for (let r = 0; r < rows; r++) {
-    const sec = normalized[r];
-    for (let c = 0; c < cols; c++) {
-      const idx = (r * cols + c) * 3;
-      positions[idx]     = sec.pts[c][0];
-      positions[idx + 1] = sec.y;
-      positions[idx + 2] = sec.pts[c][1];
-    }
-  }
-
-  const indices: number[] = [];
-  for (let r = 0; r < rows - 1; r++) {
-    for (let c = 0; c < cols; c++) {
-      const c1 = (c + 1) % cols;
-      const a = r * cols + c;
-      const b = r * cols + c1;
-      const d = (r + 1) * cols + c;
-      const e = (r + 1) * cols + c1;
-      indices.push(a, d, b);
-      indices.push(b, d, e);
-    }
-  }
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  geo.setIndex(indices);
-  geo.computeVertexNormals();
-
-  const mat = new THREE.MeshPhysicalMaterial({
-    color: dna.facadeColor,
-    transparent: false,
-    roughness: Math.max(dna.facadeRoughness * 0.7, 0.08),
-    metalness: Math.min(dna.facadeMetalness + 0.1, 0.75),
-    side: THREE.FrontSide,
-    clearcoat: dna.facadeOpacity > 0.4 ? 0.5 : 0.15,
-    clearcoatRoughness: 0.1,
-    emissive: 0x141c28,
-    emissiveIntensity: 0.15,
-  });
-
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  scene.add(mesh);
-}
-
-function buildLoftSurface(
-  scene: THREE.Scene,
-  dna: ArchitectFormDNA,
-  baseW: number,
-  baseD: number,
-  aboveGroundFloors: number[],
-  floorY: Map<number, number>,
-  floorH: Map<number, number>,
-  nodesByFloor: Map<number, FloorNode[]>,
-) {
-  if (aboveGroundFloors.length < 2) return;
-
-  const totalAbove = aboveGroundFloors.length;
-  const targetPts = 32;
-
-  interface CrossSection {
-    y: number;
-    outline: [number, number][];
-  }
-
-  const sections: CrossSection[] = [];
-
-  for (let fi = 0; fi < aboveGroundFloors.length; fi++) {
-    const floor = aboveGroundFloors[fi];
-    const y = floorY.get(floor)!;
-    const h = floorH.get(floor)!;
-    const nodes = nodesByFloor.get(floor)!;
-
-    const floorStyle = nodes.find((n) => n.style_ref && n.style_ref !== "none")?.style_ref;
-    const floorDNA = getFloorFormDNA(floorStyle, dna);
-    const groundScale = floor <= 1 ? floorDNA.groundExpansion : 1;
-
-    const outline = generateFloorOutline(floorDNA, baseW * groundScale, baseD * groundScale, fi, totalAbove);
-
-    sections.push({ y, outline: normalizeOutline(outline, targetPts) });
-    sections.push({ y: y + h, outline: normalizeOutline(outline, targetPts) });
-  }
-
-  if (sections.length < 2) return;
-
-  const isSculptural = dna.transitionStyle === "sculptural";
-  const interpSegs = isSculptural ? 6 : 4;
-
-  const allSections: CrossSection[] = [];
-
-  for (let si = 0; si < sections.length - 1; si++) {
-    const s0 = sections[Math.max(0, si - 1)];
-    const s1 = sections[si];
-    const s2 = sections[si + 1];
-    const s3 = sections[Math.min(sections.length - 1, si + 2)];
-
-    allSections.push(s1);
-
-    for (let t = 1; t < interpSegs; t++) {
-      const frac = t / interpSegs;
-      const interpY = catmullRom(s0.y, s1.y, s2.y, s3.y, frac);
-      const interpOutline: [number, number][] = [];
-
-      for (let p = 0; p < targetPts; p++) {
-        const x = catmullRom(s0.outline[p][0], s1.outline[p][0], s2.outline[p][0], s3.outline[p][0], frac);
-        const z = catmullRom(s0.outline[p][1], s1.outline[p][1], s2.outline[p][1], s3.outline[p][1], frac);
-        interpOutline.push([x, z]);
-      }
-
-      allSections.push({ y: interpY, outline: interpOutline });
-    }
-  }
-  allSections.push(sections[sections.length - 1]);
-
-  const rows = allSections.length;
-  const cols = targetPts;
-  const vertexCount = rows * cols;
-  const positions = new Float32Array(vertexCount * 3);
-  const normals = new Float32Array(vertexCount * 3);
-
-  for (let r = 0; r < rows; r++) {
-    const sec = allSections[r];
-    for (let c = 0; c < cols; c++) {
-      const idx = (r * cols + c) * 3;
-      positions[idx] = sec.outline[c][0];
-      positions[idx + 1] = sec.y;
-      positions[idx + 2] = sec.outline[c][1];
-    }
-  }
-
-  const indices: number[] = [];
-  for (let r = 0; r < rows - 1; r++) {
-    for (let c = 0; c < cols; c++) {
-      const c1 = (c + 1) % cols;
-      const a = r * cols + c;
-      const b = r * cols + c1;
-      const d = (r + 1) * cols + c;
-      const e = (r + 1) * cols + c1;
-      indices.push(a, d, b);
-      indices.push(b, d, e);
-    }
-  }
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  geo.setIndex(indices);
-  geo.computeVertexNormals();
-
-  const mat = new THREE.MeshPhysicalMaterial({
-    color: dna.facadeColor,
-    transparent: true,
-    opacity: 0.80 + dna.facadeOpacity * 0.20,
-    roughness: dna.facadeRoughness * 0.8,
-    metalness: Math.min(dna.facadeMetalness + 0.15, 0.8),
-    side: THREE.DoubleSide,
-    clearcoat: 0.3,
-    clearcoatRoughness: 0.15,
-    emissive: 0x1a2030,
-    emissiveIntensity: 0.08,
-  });
-
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  scene.add(mesh);
-
-  const wireGeo = new THREE.WireframeGeometry(geo);
-  const wireMat = new THREE.LineBasicMaterial({
-    color: 0x506080,
-    transparent: true,
-    opacity: 0.12,
-  });
-  const wireframe = new THREE.LineSegments(wireGeo, wireMat);
-  scene.add(wireframe);
-}
-
-function catmullRom(p0: number, p1: number, p2: number, p3: number, t: number): number {
-  const t2 = t * t;
-  const t3 = t2 * t;
-  return 0.5 * (
-    (2 * p1) +
-    (-p0 + p2) * t +
-    (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 +
-    (-p0 + 3 * p1 - 3 * p2 + p3) * t3
-  );
-}
-
-function normalizeOutline(outline: [number, number][], count: number): [number, number][] {
-  if (outline.length === count) return outline;
-  if (outline.length === 0) return Array(count).fill([0, 0]) as [number, number][];
-
-  const arcLens: number[] = [0];
-  for (let i = 1; i < outline.length; i++) {
-    const dx = outline[i][0] - outline[i - 1][0];
-    const dz = outline[i][1] - outline[i - 1][1];
-    arcLens.push(arcLens[i - 1] + Math.sqrt(dx * dx + dz * dz));
-  }
-  const dx = outline[0][0] - outline[outline.length - 1][0];
-  const dz = outline[0][1] - outline[outline.length - 1][1];
-  const totalLen = arcLens[arcLens.length - 1] + Math.sqrt(dx * dx + dz * dz);
-
-  const result: [number, number][] = [];
-  for (let i = 0; i < count; i++) {
-    const targetLen = (i / count) * totalLen;
-
-    let seg = 0;
-    for (seg = 0; seg < arcLens.length - 1; seg++) {
-      if (arcLens[seg + 1] >= targetLen) break;
-    }
-
-    const segLen = seg < arcLens.length - 1
-      ? arcLens[seg + 1] - arcLens[seg]
-      : totalLen - arcLens[arcLens.length - 1];
-
-    const t = segLen > 0 ? (targetLen - arcLens[seg]) / segLen : 0;
-
-    const p1 = outline[seg];
-    const p2 = seg < outline.length - 1 ? outline[seg + 1] : outline[0];
-
-    result.push([
-      p1[0] + (p2[0] - p1[0]) * t,
-      p1[1] + (p2[1] - p1[1]) * t,
-    ]);
-  }
-
-  return result;
-}
-
-// ============================================================
-// Wall Surface Geometry
-// ============================================================
-
-function buildWallGeometry(outline: [number, number][], height: number): THREE.BufferGeometry {
-  const n = outline.length;
-  const positions = new Float32Array(n * 6 * 3);
-  const normals = new Float32Array(n * 6 * 3);
-  const uvs = new Float32Array(n * 6 * 2);
-
-  let perimeter = 0;
-  for (let i = 0; i < n; i++) {
-    const [x1, z1] = outline[i];
-    const [x2, z2] = outline[(i + 1) % n];
-    perimeter += Math.sqrt((x2 - x1) ** 2 + (z2 - z1) ** 2);
-  }
-
-  let uAccum = 0;
-  for (let i = 0; i < n; i++) {
-    const [x1, z1] = outline[i];
-    const [x2, z2] = outline[(i + 1) % n];
-    const segLen = Math.sqrt((x2 - x1) ** 2 + (z2 - z1) ** 2);
-
-    const dx = x2 - x1, dz = z2 - z1;
-    const len = Math.sqrt(dx * dx + dz * dz) || 1;
-    const nx = dz / len, nz = -dx / len;
-
-    const b = i * 18;
-    positions[b]     = x1; positions[b + 1]  = 0;      positions[b + 2]  = z1;
-    positions[b + 3] = x2; positions[b + 4]  = 0;      positions[b + 5]  = z2;
-    positions[b + 6] = x2; positions[b + 7]  = height; positions[b + 8]  = z2;
-    positions[b + 9]  = x1; positions[b + 10] = 0;      positions[b + 11] = z1;
-    positions[b + 12] = x2; positions[b + 13] = height; positions[b + 14] = z2;
-    positions[b + 15] = x1; positions[b + 16] = height; positions[b + 17] = z1;
-
-    for (let v = 0; v < 6; v++) {
-      normals[b + v * 3] = nx;
-      normals[b + v * 3 + 1] = 0;
-      normals[b + v * 3 + 2] = nz;
-    }
-
-    const u0 = uAccum / perimeter;
-    const u1 = (uAccum + segLen) / perimeter;
-    const ub = i * 12;
-    uvs[ub]     = u0; uvs[ub + 1]  = 0;
-    uvs[ub + 2] = u1; uvs[ub + 3]  = 0;
-    uvs[ub + 4] = u1; uvs[ub + 5]  = 1;
-    uvs[ub + 6] = u0; uvs[ub + 7]  = 0;
-    uvs[ub + 8] = u1; uvs[ub + 9]  = 1;
-    uvs[ub + 10] = u0; uvs[ub + 11] = 1;
-
-    uAccum += segLen;
-  }
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  geo.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
-  geo.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
-  return geo;
-}
-
-function addMullionGrid(
-  group: THREE.Group,
-  outline: [number, number][],
-  baseY: number,
-  height: number,
-  color: number,
-  opacity: number,
-) {
-  const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity });
-  const n = outline.length;
-
-  const step = Math.max(2, Math.floor(n / 16));
-  const verts: number[] = [];
-  for (let i = 0; i < n; i += step) {
-    const [x, z] = outline[i];
-    verts.push(x, baseY, z, x, baseY + height, z);
-  }
-
-  const midY = baseY + height * 0.5;
-  for (let i = 0; i < n; i++) {
-    const [x1, z1] = outline[i];
-    const [x2, z2] = outline[(i + 1) % n];
-    verts.push(x1, midY, z1, x2, midY, z2);
-  }
-
-  if (verts.length > 0) {
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.Float32BufferAttribute(verts, 3));
-    group.add(new THREE.LineSegments(geo, mat));
-  }
-}
-
-// ============================================================
-// Structural Expression
-// ============================================================
-
-function addDiagridSegment(group: THREE.Group, outline: [number, number][], baseY: number, height: number, dna: ArchitectFormDNA) {
-  const pts = outline;
-  const step = Math.max(3, Math.floor(pts.length / 8));
-  const mat = new THREE.LineBasicMaterial({ color: 0x5570cc, transparent: true, opacity: 0.4 });
-
-  for (let i = 0; i < pts.length; i += step) {
-    const [x1, z1] = pts[i];
-    const [x2, z2] = pts[(i + step) % pts.length];
-    const positions = new Float32Array([
-      x1, baseY, z1, x2, baseY + height, z2,
-      x2, baseY, z2, x1, baseY + height, z1,
-    ]);
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    group.add(new THREE.LineSegments(geo, mat));
-  }
-}
-
-function addExoskeletonSegment(group: THREE.Group, outline: [number, number][], baseY: number, height: number) {
-  const pts = outline;
-  const mat = new THREE.LineBasicMaterial({ color: 0x6880a8, transparent: true, opacity: 0.45 });
-  const step = Math.max(2, Math.floor(pts.length / 10));
-
-  for (let i = 0; i < pts.length; i += step) {
-    const [x, z] = pts[i];
-    const nx = x * 1.05, nz = z * 1.05;
-    const positions = new Float32Array([nx, baseY, nz, nx, baseY + height, nz]);
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    group.add(new THREE.LineSegments(geo, mat));
-  }
-}
-
-function addColumnExpression(group: THREE.Group, outline: [number, number][], baseY: number, height: number) {
-  const pts = outline;
-  const step = Math.max(3, Math.floor(pts.length / 6));
-  const colMat = new THREE.MeshStandardMaterial({ color: 0x404858, roughness: 0.4, metalness: 0.35 });
-
-  for (let i = 0; i < pts.length; i += step) {
-    const [x, z] = pts[i];
-    const colGeo = new THREE.CylinderGeometry(0.2, 0.2, height, 6);
-    const col = new THREE.Mesh(colGeo, colMat);
-    col.position.set(x, baseY + height / 2, z);
-    col.castShadow = true;
-    group.add(col);
-  }
-}
-
-// ============================================================
-// Roof Treatment
-// ============================================================
-
-function addRoofTreatment(scene: THREE.Scene, dna: ArchitectFormDNA, baseW: number, baseD: number, topY: number, totalFloors: number) {
-  const outline = generateFloorOutline(dna, baseW, baseD, totalFloors - 1, totalFloors);
-
-  switch (dna.roofStyle) {
-    case "garden": {
-      const shape = outlineToShape(outline);
-      const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.2, bevelEnabled: false });
-      geo.rotateX(-Math.PI / 2);
-      const mat = new THREE.MeshStandardMaterial({
-        color: 0x3a6a3a, roughness: 0.65, metalness: 0.05,
-        emissive: 0x2a4a2a, emissiveIntensity: 0.08,
-      });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.y = topY + 0.1;
-      mesh.receiveShadow = true;
-      scene.add(mesh);
-      break;
-    }
-    case "crown": {
-      const shape = outlineToShape(outline.map(([x, z]) => [x * 0.85, z * 0.85] as [number, number]));
-      const geo = new THREE.ExtrudeGeometry(shape, { depth: 2.5, bevelEnabled: true, bevelSize: 0.3, bevelThickness: 0.3 });
-      geo.rotateX(-Math.PI / 2);
-      const mat = new THREE.MeshStandardMaterial({
-        color: 0x505878, roughness: 0.25, metalness: 0.55,
-        emissive: 0x2a2a48, emissiveIntensity: 0.06,
-      });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.y = topY;
-      mesh.castShadow = true;
-      scene.add(mesh);
-      break;
-    }
-    case "sculptural": {
-      const geo = new THREE.SphereGeometry(Math.min(baseW, baseD) * 0.15, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2);
-      const mat = new THREE.MeshStandardMaterial({
-        color: 0x505868, roughness: 0.35, metalness: 0.35,
-        emissive: 0x252838, emissiveIntensity: 0.06,
-      });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.y = topY;
-      mesh.castShadow = true;
-      scene.add(mesh);
-      break;
-    }
-    case "sloped": {
-      const shape = outlineToShape(outline);
-      const geo = new THREE.ExtrudeGeometry(shape, { depth: 3.0, bevelEnabled: true, bevelSize: 1.5, bevelSegments: 3, bevelThickness: 1.5 });
-      geo.rotateX(-Math.PI / 2);
-      geo.scale(1, 0.5, 1);
-      const mat = new THREE.MeshStandardMaterial({
-        color: 0x404858, roughness: 0.45, metalness: 0.25,
-      });
-      const mesh = new THREE.Mesh(geo, mat);
-      mesh.position.y = topY;
-      mesh.castShadow = true;
-      scene.add(mesh);
-      break;
-    }
-    default: {
-      const shape = outlineToShape(outline);
-      const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.8, bevelEnabled: false });
-      geo.rotateX(-Math.PI / 2);
-      const edges = new THREE.EdgesGeometry(geo);
-      const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({
-        color: 0x4a5068, transparent: true, opacity: 0.45,
-      }));
-      line.position.y = topY;
-      scene.add(line);
-    }
-  }
-}
-
-// ============================================================
-// Geometry Utilities
-// ============================================================
-
-function outlineToShape(outline: [number, number][]): THREE.Shape {
-  const shape = new THREE.Shape();
-  shape.moveTo(outline[0][0], outline[0][1]);
-  for (let i = 1; i < outline.length; i++) {
-    shape.lineTo(outline[i][0], outline[i][1]);
-  }
-  shape.closePath();
-  return shape;
-}
-
-function applyTerraceInset(outline: [number, number][], depth: number, seed: number): [number, number][] {
-  const side = seed % 4;
-  return outline.map(([x, z]) => {
-    switch (side) {
-      case 0: return z < 0 ? [x, z + depth] as [number, number] : [x, z] as [number, number];
-      case 1: return x > 0 ? [x - depth, z] as [number, number] : [x, z] as [number, number];
-      case 2: return z > 0 ? [x, z - depth] as [number, number] : [x, z] as [number, number];
-      case 3: return x < 0 ? [x + depth, z] as [number, number] : [x, z] as [number, number];
-      default: return [x, z] as [number, number];
-    }
-  });
-}
-
-function computeDotPosition(
-  pos: string,
-  floorW: number,
-  floorD: number,
-  coreR: number,
-): { x: number; z: number } {
-  const rx = floorW * 0.32;
-  const rz = floorD * 0.32;
-  switch (pos) {
-    case "north":     return { x: 0,   z: rz };
-    case "south":     return { x: 0,   z: -rz };
-    case "east":      return { x: rx,  z: 0 };
-    case "west":      return { x: -rx, z: 0 };
-    case "northeast": return { x: rx * 0.7,  z: rz * 0.7 };
-    case "northwest": return { x: -rx * 0.7, z: rz * 0.7 };
-    case "southeast": return { x: rx * 0.7,  z: -rz * 0.7 };
-    case "southwest": return { x: -rx * 0.7, z: -rz * 0.7 };
-    default:          return { x: 0, z: 0 };
-  }
-}
-
-function estimateBuildingHeight(graph: VerticalNodeGraph): number {
-  let h = 0;
-  const byFloor = new Map<number, FloorNode[]>();
-  for (const n of graph.nodes) {
-    if (!byFloor.has(n.floor_level)) byFloor.set(n.floor_level, []);
-    byFloor.get(n.floor_level)!.push(n);
-  }
-  for (const [, nodes] of byFloor) {
-    const zone = nodes[0]?.floor_zone || "middle";
-    h += nodes[0]?.ceiling_height || DEFAULT_CEILING[zone] || 3.8;
-  }
-  return h;
-}
-
-function findNodeId(obj: THREE.Object3D): string | null {
-  let cur: THREE.Object3D | null = obj;
-  while (cur) {
-    if (cur.userData?.nodeId) return cur.userData.nodeId;
-    cur = cur.parent;
-  }
-  return null;
-}
-
-function makeLabel(text: string, color: number): THREE.Sprite {
-  const canvas = document.createElement("canvas");
-  canvas.width = 512; canvas.height = 128;
-  const ctx = canvas.getContext("2d")!;
-  ctx.font = "28px 'SF Mono', monospace";
-  ctx.fillStyle = `#${color.toString(16).padStart(6, "0")}`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.fillText(text, 256, 64);
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.minFilter = THREE.LinearFilter;
-  return new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
-}
-
-// ============================================================
-// OBJ / STL Export
-// ============================================================
-
-function downloadFile(data: string | Blob, filename: string, mimeType: string) {
-  const blob = data instanceof Blob ? data : new Blob([data], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-function exportOBJ(scene: THREE.Scene, filename: string) {
-  let obj = "# GIM Mass Model Export\n";
-  let vertexOffset = 0;
-
-  scene.traverse((child) => {
-    if ((child as THREE.Mesh).isMesh && child.visible) {
-      const mesh = child as THREE.Mesh;
-      const geometry = mesh.geometry;
-      const position = geometry.getAttribute("position");
-      const index = geometry.getIndex();
-
-      obj += `o ${child.name || "mass"}\n`;
-
-      // Vertices (apply world transform)
-      const worldMatrix = mesh.matrixWorld;
-      const v = new THREE.Vector3();
-      for (let i = 0; i < position.count; i++) {
-        v.set(position.getX(i), position.getY(i), position.getZ(i));
-        v.applyMatrix4(worldMatrix);
-        obj += `v ${v.x.toFixed(4)} ${v.y.toFixed(4)} ${v.z.toFixed(4)}\n`;
-      }
-
-      // Faces
-      if (index) {
-        for (let i = 0; i < index.count; i += 3) {
-          obj += `f ${index.getX(i) + 1 + vertexOffset} ${index.getX(i + 1) + 1 + vertexOffset} ${index.getX(i + 2) + 1 + vertexOffset}\n`;
-        }
-      }
-
-      vertexOffset += position.count;
-    }
-  });
-
-  downloadFile(obj, filename, "text/plain");
-}
-
-function exportSTL(scene: THREE.Scene, filename: string) {
-  let triangleCount = 0;
-  const meshes: { mesh: THREE.Mesh; geometry: THREE.BufferGeometry }[] = [];
-
-  scene.traverse((child) => {
-    if ((child as THREE.Mesh).isMesh && child.visible) {
-      const mesh = child as THREE.Mesh;
-      const geo = mesh.geometry;
-      const idx = geo.getIndex();
-      triangleCount += idx ? idx.count / 3 : geo.getAttribute("position").count / 3;
-      meshes.push({ mesh, geometry: geo });
-    }
-  });
-
-  const bufferLength = 80 + 4 + triangleCount * 50;
-  const buffer = new ArrayBuffer(bufferLength);
-  const view = new DataView(buffer);
-
-  // Header (80 bytes)
-  const header = new TextEncoder().encode("GIM Mass Model STL Export");
-  new Uint8Array(buffer, 0, header.length).set(header);
-
-  // Triangle count
-  view.setUint32(80, triangleCount, true);
-
-  let offset = 84;
-  const v1 = new THREE.Vector3();
-  const v2 = new THREE.Vector3();
-  const v3 = new THREE.Vector3();
-  const normal = new THREE.Vector3();
-
-  for (const { mesh, geometry } of meshes) {
-    const pos = geometry.getAttribute("position");
-    const idx = geometry.getIndex();
-    const count = idx ? idx.count : pos.count;
-
-    for (let i = 0; i < count; i += 3) {
-      const i0 = idx ? idx.getX(i) : i;
-      const i1 = idx ? idx.getX(i + 1) : i + 1;
-      const i2 = idx ? idx.getX(i + 2) : i + 2;
-
-      v1.set(pos.getX(i0), pos.getY(i0), pos.getZ(i0)).applyMatrix4(mesh.matrixWorld);
-      v2.set(pos.getX(i1), pos.getY(i1), pos.getZ(i1)).applyMatrix4(mesh.matrixWorld);
-      v3.set(pos.getX(i2), pos.getY(i2), pos.getZ(i2)).applyMatrix4(mesh.matrixWorld);
-
-      normal.crossVectors(v2.clone().sub(v1), v3.clone().sub(v1)).normalize();
-
-      // Normal
-      view.setFloat32(offset, normal.x, true); offset += 4;
-      view.setFloat32(offset, normal.y, true); offset += 4;
-      view.setFloat32(offset, normal.z, true); offset += 4;
-      // Vertices
-      for (const v of [v1, v2, v3]) {
-        view.setFloat32(offset, v.x, true); offset += 4;
-        view.setFloat32(offset, v.y, true); offset += 4;
-        view.setFloat32(offset, v.z, true); offset += 4;
-      }
-      // Attribute byte count
-      view.setUint16(offset, 0, true); offset += 2;
-    }
-  }
-
-  downloadFile(new Blob([buffer]), filename, "application/octet-stream");
-}
-
-const exportBtnStyle: React.CSSProperties = {
-  background: "rgba(20,20,30,0.8)",
-  border: "1px solid #2a2a4e",
-  borderRadius: 4,
-  color: "#888",
-  fontSize: 9,
-  padding: "3px 8px",
-  cursor: "pointer",
-  fontFamily: "inherit",
-};
-
-const legendStyle: React.CSSProperties = {
+const exportBarStyle: React.CSSProperties = {
   position: "absolute",
-  bottom: 10,
-  left: 10,
-  background: "rgba(20,22,30,0.85)",
-  border: "1px solid #2a3040",
-  borderRadius: 4,
-  padding: "6px 8px",
-  pointerEvents: "none",
+  top: 14,
+  right: 14,
+  zIndex: 2,
+  display: "flex",
+  gap: 8,
+};
+
+const variantBadgeStyle: React.CSSProperties = {
+  border: "1px solid #314764",
+  borderRadius: 999,
+  background: "rgba(12, 20, 32, 0.9)",
+  color: "#dce7ff",
+  padding: "8px 12px",
+  fontSize: 11,
+  lineHeight: 1,
+  backdropFilter: "blur(8px)",
+};
+
+const exportButtonStyle: React.CSSProperties = {
+  border: "1px solid #2f4c73",
+  borderRadius: 8,
+  background: "rgba(12, 20, 32, 0.88)",
+  color: "#dce7ff",
+  padding: "8px 12px",
+  fontFamily: "inherit",
+  fontSize: 11,
+  cursor: "pointer",
+  backdropFilter: "blur(8px)",
+};
+
+const canvasStyle: React.CSSProperties = {
+  width: "100%",
+  height: "100%",
+};
+
+const snapshotRailStyle: React.CSSProperties = {
+  borderTop: "1px solid #1a1a2e",
+  background: "#0d0d15",
+  padding: "10px 12px 12px",
+  display: "flex",
+  flexDirection: "column",
+  gap: 8,
+};
+
+const snapshotRailHeaderStyle: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+};
+
+const snapshotRailTitleStyle: React.CSSProperties = {
+  color: "#93a4bc",
+  fontSize: 10,
+  textTransform: "uppercase",
+  letterSpacing: 1,
+};
+
+const snapshotRailMetaStyle: React.CSSProperties = {
+  color: "#667085",
+  fontSize: 10,
+};
+
+const snapshotListStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 10,
+  overflowX: "auto",
+  paddingBottom: 2,
+};
+
+const snapshotButtonStyle: React.CSSProperties = {
+  minWidth: 110,
+  width: 110,
+  borderRadius: 10,
+  border: "1px solid #2a3445",
+  background: "#111520",
+  overflow: "hidden",
+  padding: 0,
+  cursor: "pointer",
+  textAlign: "left",
+  fontFamily: "inherit",
+  flexShrink: 0,
+};
+
+const snapshotImageStyle: React.CSSProperties = {
+  width: "100%",
+  height: 72,
+  objectFit: "cover",
+  display: "block",
+  background: "#08101a",
+};
+
+const snapshotPlaceholderStyle: React.CSSProperties = {
+  width: "100%",
+  height: 72,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  background:
+    "linear-gradient(135deg, rgba(64,94,132,0.42), rgba(16,22,34,0.9))",
+  color: "#dce7ff",
+  fontSize: 11,
+};
+
+const snapshotCaptionStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 2,
+  padding: "8px 10px",
+  fontSize: 10,
 };

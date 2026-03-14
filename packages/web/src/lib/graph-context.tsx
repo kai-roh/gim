@@ -1,124 +1,94 @@
 "use client";
 
 import React, { createContext, useContext, useReducer, useCallback, useRef } from "react";
-import type {
-  VerticalNodeGraph,
-  FloorNode,
-  FloorZone,
-  SpatialMassGraph,
-  MassNode,
-  MassRelation,
-} from "@gim/core";
+import type { MassNode, ResolvedMassModel, SpatialMassGraph } from "@gim/core";
+import {
+  resolveSpatialMassModel,
+  withResolvedMassModel,
+} from "@gim/core/graph/resolved-model";
 
-// Inline immutable graph operations (from @gim/core/graph/operations)
-// to avoid pulling in the full barrel export which includes Node.js-only modules
-
-// ---- VerticalNodeGraph ops (legacy) ----
-
-function coreAddNode(graph: VerticalNodeGraph, node: FloorNode): VerticalNodeGraph {
-  return {
+function coreAddNode(graph: SpatialMassGraph, node: MassNode): SpatialMassGraph {
+  return withResolvedMassModel({
     ...graph,
     nodes: [...graph.nodes, node],
-    metadata: { ...graph.metadata, total_nodes: graph.metadata.total_nodes + 1 },
-  };
-}
-
-function coreRemoveNode(graph: VerticalNodeGraph, nodeId: string): VerticalNodeGraph {
-  const newNodes = graph.nodes.filter((n) => n.id !== nodeId);
-  const newEdges = graph.edges.filter((e) => e.source !== nodeId && e.target !== nodeId);
-  return {
-    ...graph,
-    nodes: newNodes,
-    edges: newEdges,
-    metadata: { ...graph.metadata, total_nodes: newNodes.length, total_edges: newEdges.length },
-  };
-}
-
-function coreUpdateNode(graph: VerticalNodeGraph, nodeId: string, updates: Partial<FloorNode>): VerticalNodeGraph {
-  return {
-    ...graph,
-    nodes: graph.nodes.map((n) => (n.id === nodeId ? { ...n, ...updates, id: n.id } : n)),
-  };
-}
-
-function coreMoveNode(graph: VerticalNodeGraph, nodeId: string, newFloorLevel: number, newZone?: FloorZone): VerticalNodeGraph {
-  return coreUpdateNode(graph, nodeId, {
-    floor_level: newFloorLevel,
-    ...(newZone ? { floor_zone: newZone } : {}),
   });
 }
 
-// ---- SpatialMassGraph ops ----
+function coreRemoveNode(graph: SpatialMassGraph, nodeId: string): SpatialMassGraph {
+  const nodes = graph.nodes.filter((node) => node.id !== nodeId);
+  const relations = graph.relations.filter(
+    (relation) => relation.source !== nodeId && relation.target !== nodeId
+  );
 
-function massAddNode(graph: SpatialMassGraph, node: MassNode): SpatialMassGraph {
+  return withResolvedMassModel({
+    ...graph,
+    nodes,
+    relations,
+  });
+}
+
+function coreUpdateNode(
+  graph: SpatialMassGraph,
+  nodeId: string,
+  updates: Partial<MassNode>
+): SpatialMassGraph {
+  return withResolvedMassModel({
+    ...graph,
+    nodes: graph.nodes.map((node) =>
+      node.id === nodeId ? { ...node, ...updates, id: node.id } : node
+    ),
+  });
+}
+
+export interface ModelVariantSnapshot {
+  id: string;
+  label: string;
+  seed: number;
+  generatedAt: string;
+  previewDataUrl: string | null;
+  resolvedModel: ResolvedMassModel;
+}
+
+function withCurrentResolvedModel(
+  graph: SpatialMassGraph,
+  resolvedModel: ResolvedMassModel
+): SpatialMassGraph {
   return {
     ...graph,
-    nodes: [...graph.nodes, node],
-    metadata: { ...graph.metadata, total_nodes: graph.metadata.total_nodes + 1 },
+    resolved_model: resolvedModel,
   };
 }
 
-function massRemoveNode(graph: SpatialMassGraph, nodeId: string): SpatialMassGraph {
-  const newNodes = graph.nodes.filter((n) => n.id !== nodeId);
-  const newRelations = graph.relations.filter((r) => r.source !== nodeId && r.target !== nodeId);
+function createVariantSnapshot(resolvedModel: ResolvedMassModel): ModelVariantSnapshot {
   return {
-    ...graph,
-    nodes: newNodes,
-    relations: newRelations,
-    metadata: { ...graph.metadata, total_nodes: newNodes.length, total_relations: newRelations.length },
+    id: resolvedModel.variant_id,
+    label: resolvedModel.variant_label,
+    seed: resolvedModel.seed,
+    generatedAt: resolvedModel.generated_at,
+    previewDataUrl: null,
+    resolvedModel,
   };
 }
 
-function massUpdateNode(graph: SpatialMassGraph, nodeId: string, updates: Partial<MassNode>): SpatialMassGraph {
+function initializeVariantState(graph: SpatialMassGraph) {
+  const snapshot = createVariantSnapshot(graph.resolved_model);
   return {
-    ...graph,
-    nodes: graph.nodes.map((n) => (n.id === nodeId ? { ...n, ...updates, id: n.id } : n)),
+    graph,
+    variantHistory: [snapshot],
+    activeVariantId: snapshot.id,
   };
 }
-
-function massAddRelation(graph: SpatialMassGraph, relation: MassRelation): SpatialMassGraph {
-  return {
-    ...graph,
-    relations: [...graph.relations, relation],
-    metadata: { ...graph.metadata, total_relations: graph.metadata.total_relations + 1 },
-  };
-}
-
-function massRemoveRelation(graph: SpatialMassGraph, relationId: string): SpatialMassGraph {
-  const newRelations = graph.relations.filter((r) => r.id !== relationId);
-  return {
-    ...graph,
-    relations: newRelations,
-    metadata: { ...graph.metadata, total_relations: newRelations.length },
-  };
-}
-
-// ============================================================
-// Graph State — supports both VerticalNodeGraph (v1) and SpatialMassGraph (v2)
-// ============================================================
 
 export interface GraphState {
-  // v1 (legacy)
-  graph: VerticalNodeGraph | null;
-  // v2
-  massGraph: SpatialMassGraph | null;
-  graphVersion: 1 | 2;
-
+  graph: SpatialMassGraph | null;
   selectedNodeId: string | null;
-  selectedFloor: number | null;
-  activeEdgeTypes: Set<string>;
+  activeRelationFamilies: Set<string>;
   loading: boolean;
   error: string | null;
   editMode: boolean;
+  variantHistory: ModelVariantSnapshot[];
+  activeVariantId: string | null;
 }
-
-const DEFAULT_ACTIVE_EDGES = new Set([
-  "STACKED_ON",
-  "ADJACENT_TO",
-  "ZONE_BOUNDARY",
-  "STRUCTURAL_TRANSFER",
-  "STYLE_BOUNDARY",
-]);
 
 const DEFAULT_ACTIVE_RELATIONS = new Set([
   "stack",
@@ -131,200 +101,145 @@ const DEFAULT_ACTIVE_RELATIONS = new Set([
 
 const initialState: GraphState = {
   graph: null,
-  massGraph: null,
-  graphVersion: 1,
   selectedNodeId: null,
-  selectedFloor: null,
-  activeEdgeTypes: DEFAULT_ACTIVE_EDGES,
+  activeRelationFamilies: DEFAULT_ACTIVE_RELATIONS,
   loading: false,
   error: null,
   editMode: false,
+  variantHistory: [],
+  activeVariantId: null,
 };
 
-// ============================================================
-// Actions
-// ============================================================
-
 export type GraphAction =
-  // Shared
   | { type: "LOAD_GRAPH_START" }
+  | { type: "LOAD_GRAPH_SUCCESS"; graph: SpatialMassGraph }
   | { type: "LOAD_GRAPH_ERROR"; error: string }
   | { type: "SELECT_NODE"; nodeId: string | null }
-  | { type: "SELECT_FLOOR"; floor: number | null }
-  | { type: "TOGGLE_EDGE_TYPE"; edgeType: string }
-  | { type: "SET_EDGE_TYPES"; edgeTypes: Set<string> }
+  | { type: "TOGGLE_RELATION_FAMILY"; family: string }
+  | { type: "SET_RELATION_FAMILIES"; families: Set<string> }
   | { type: "TOGGLE_EDIT_MODE" }
-  // v1 (legacy VerticalNodeGraph)
-  | { type: "LOAD_GRAPH_SUCCESS"; graph: VerticalNodeGraph }
-  | { type: "UPDATE_NODE"; nodeId: string; updates: Partial<FloorNode> }
+  | { type: "UPDATE_NODE"; nodeId: string; updates: Partial<MassNode> }
   | { type: "REMOVE_NODE"; nodeId: string }
-  | { type: "ADD_NODE"; node: FloorNode }
-  | { type: "MOVE_NODE"; nodeId: string; floorLevel: number; zone?: FloorZone }
-  | { type: "SET_GRAPH"; graph: VerticalNodeGraph }
-  // v2 (SpatialMassGraph)
-  | { type: "LOAD_MASS_GRAPH_SUCCESS"; massGraph: SpatialMassGraph }
-  | { type: "UPDATE_MASS_NODE"; nodeId: string; updates: Partial<MassNode> }
-  | { type: "REMOVE_MASS_NODE"; nodeId: string }
-  | { type: "ADD_MASS_NODE"; node: MassNode }
-  | { type: "ADD_MASS_RELATION"; relation: MassRelation }
-  | { type: "REMOVE_MASS_RELATION"; relationId: string }
-  | { type: "SET_MASS_GRAPH"; massGraph: SpatialMassGraph };
-
-// ============================================================
-// Undo/Redo History
-// ============================================================
+  | { type: "ADD_NODE"; node: MassNode }
+  | { type: "SET_GRAPH"; graph: SpatialMassGraph }
+  | { type: "ADD_MODEL_VARIANT"; resolvedModel: ResolvedMassModel }
+  | { type: "SET_ACTIVE_VARIANT"; variantId: string }
+  | { type: "SET_VARIANT_PREVIEW"; variantId: string; previewDataUrl: string };
 
 const MAX_HISTORY = 50;
+const MAX_VARIANTS = 12;
 
 interface UndoState {
-  past: (VerticalNodeGraph | SpatialMassGraph)[];
-  future: (VerticalNodeGraph | SpatialMassGraph)[];
+  past: SpatialMassGraph[];
+  future: SpatialMassGraph[];
 }
-
-// ============================================================
-// Reducer
-// ============================================================
 
 function graphReducer(state: GraphState, action: GraphAction): GraphState {
   switch (action.type) {
     case "LOAD_GRAPH_START":
       return { ...state, loading: true, error: null };
-
-    case "LOAD_GRAPH_SUCCESS":
-      return { ...state, graph: action.graph, graphVersion: 1, loading: false, error: null };
-
-    case "LOAD_MASS_GRAPH_SUCCESS":
-      return { ...state, massGraph: action.massGraph, graphVersion: 2, loading: false, error: null };
-
+    case "LOAD_GRAPH_SUCCESS": {
+      const graph = withResolvedMassModel(action.graph);
+      return { ...state, ...initializeVariantState(graph), loading: false, error: null };
+    }
     case "LOAD_GRAPH_ERROR":
       return { ...state, loading: false, error: action.error };
-
-    case "SELECT_NODE": {
-      if (action.nodeId === null) {
-        return { ...state, selectedNodeId: null, selectedFloor: null };
-      }
-      if (state.graphVersion === 2 && state.massGraph) {
-        const massNode = state.massGraph.nodes.find((n) => n.id === action.nodeId);
-        return {
-          ...state,
-          selectedNodeId: action.nodeId,
-          selectedFloor: massNode?.floor_range[0] ?? state.selectedFloor,
-        };
-      }
-      const node = state.graph?.nodes.find((n) => n.id === action.nodeId);
-      return {
-        ...state,
-        selectedNodeId: action.nodeId,
-        selectedFloor: node?.floor_level ?? state.selectedFloor,
-      };
+    case "SELECT_NODE":
+      return { ...state, selectedNodeId: action.nodeId };
+    case "TOGGLE_RELATION_FAMILY": {
+      const next = new Set(state.activeRelationFamilies);
+      if (next.has(action.family)) next.delete(action.family);
+      else next.add(action.family);
+      return { ...state, activeRelationFamilies: next };
     }
-
-    case "SELECT_FLOOR":
-      return { ...state, selectedFloor: action.floor, selectedNodeId: null };
-
-    case "TOGGLE_EDGE_TYPE": {
-      const next = new Set(state.activeEdgeTypes);
-      if (next.has(action.edgeType)) {
-        next.delete(action.edgeType);
-      } else {
-        next.add(action.edgeType);
-      }
-      return { ...state, activeEdgeTypes: next };
-    }
-
-    case "SET_EDGE_TYPES":
-      return { ...state, activeEdgeTypes: action.edgeTypes };
-
+    case "SET_RELATION_FAMILIES":
+      return { ...state, activeRelationFamilies: action.families };
     case "TOGGLE_EDIT_MODE":
       return { ...state, editMode: !state.editMode };
-
-    // ---- v1 (legacy) ----
-    case "UPDATE_NODE": {
-      if (!state.graph) return state;
-      return { ...state, graph: coreUpdateNode(state.graph, action.nodeId, action.updates) };
+    case "UPDATE_NODE":
+      return state.graph
+        ? {
+            ...state,
+            ...initializeVariantState(coreUpdateNode(state.graph, action.nodeId, action.updates)),
+          }
+        : state;
+    case "REMOVE_NODE":
+      return state.graph
+        ? {
+            ...state,
+            ...initializeVariantState(coreRemoveNode(state.graph, action.nodeId)),
+            selectedNodeId:
+              state.selectedNodeId === action.nodeId ? null : state.selectedNodeId,
+          }
+        : state;
+    case "ADD_NODE":
+      return state.graph
+        ? {
+            ...state,
+            ...initializeVariantState(coreAddNode(state.graph, action.node)),
+            selectedNodeId: action.node.id,
+          }
+        : state;
+    case "SET_GRAPH": {
+      const graph = withResolvedMassModel(action.graph);
+      return { ...state, ...initializeVariantState(graph) };
     }
+    case "ADD_MODEL_VARIANT":
+      return state.graph
+        ? (() => {
+            const snapshot = createVariantSnapshot(action.resolvedModel);
+            const history = [
+              ...state.variantHistory.filter((item) => item.id !== snapshot.id),
+              snapshot,
+            ].slice(-MAX_VARIANTS);
 
-    case "REMOVE_NODE": {
+            return {
+              ...state,
+              graph: withCurrentResolvedModel(state.graph, action.resolvedModel),
+              variantHistory: history,
+              activeVariantId: snapshot.id,
+            };
+          })()
+        : state;
+    case "SET_ACTIVE_VARIANT": {
       if (!state.graph) return state;
+      const snapshot = state.variantHistory.find((item) => item.id === action.variantId);
+      if (!snapshot) return state;
       return {
         ...state,
-        graph: coreRemoveNode(state.graph, action.nodeId),
-        selectedNodeId: state.selectedNodeId === action.nodeId ? null : state.selectedNodeId,
+        graph: withCurrentResolvedModel(state.graph, snapshot.resolvedModel),
+        activeVariantId: snapshot.id,
       };
     }
-
-    case "ADD_NODE": {
-      if (!state.graph) return state;
-      return { ...state, graph: coreAddNode(state.graph, action.node), selectedNodeId: action.node.id };
-    }
-
-    case "MOVE_NODE": {
-      if (!state.graph) return state;
-      return { ...state, graph: coreMoveNode(state.graph, action.nodeId, action.floorLevel, action.zone) };
-    }
-
-    case "SET_GRAPH":
-      return { ...state, graph: action.graph };
-
-    // ---- v2 (SpatialMassGraph) ----
-    case "UPDATE_MASS_NODE": {
-      if (!state.massGraph) return state;
-      return { ...state, massGraph: massUpdateNode(state.massGraph, action.nodeId, action.updates) };
-    }
-
-    case "REMOVE_MASS_NODE": {
-      if (!state.massGraph) return state;
+    case "SET_VARIANT_PREVIEW":
       return {
         ...state,
-        massGraph: massRemoveNode(state.massGraph, action.nodeId),
-        selectedNodeId: state.selectedNodeId === action.nodeId ? null : state.selectedNodeId,
+        variantHistory: state.variantHistory.map((item) =>
+          item.id === action.variantId
+            ? { ...item, previewDataUrl: action.previewDataUrl }
+            : item
+        ),
       };
-    }
-
-    case "ADD_MASS_NODE": {
-      if (!state.massGraph) return state;
-      return { ...state, massGraph: massAddNode(state.massGraph, action.node), selectedNodeId: action.node.id };
-    }
-
-    case "ADD_MASS_RELATION": {
-      if (!state.massGraph) return state;
-      return { ...state, massGraph: massAddRelation(state.massGraph, action.relation) };
-    }
-
-    case "REMOVE_MASS_RELATION": {
-      if (!state.massGraph) return state;
-      return { ...state, massGraph: massRemoveRelation(state.massGraph, action.relationId) };
-    }
-
-    case "SET_MASS_GRAPH":
-      return { ...state, massGraph: action.massGraph };
-
     default:
       return state;
   }
 }
 
-// ============================================================
-// Context
-// ============================================================
-
 interface GraphContextValue {
   state: GraphState;
   dispatch: React.Dispatch<GraphAction>;
-  // v1 helpers
-  selectedNode: FloorNode | null;
-  floorNodes: FloorNode[];
-  // v2 helpers
-  selectedMassNode: MassNode | null;
-  massNodes: MassNode[];
-  massRelations: MassRelation[];
-  // shared
+  selectedNode: MassNode | null;
   loadGraph: () => Promise<void>;
   undo: () => void;
   redo: () => void;
   canUndo: boolean;
   canRedo: boolean;
   editDispatch: (action: GraphAction) => void;
+  variantHistory: ModelVariantSnapshot[];
+  activeVariantId: string | null;
+  regenerateVariant: () => void;
+  activateVariant: (variantId: string) => void;
+  setVariantPreview: (variantId: string, previewDataUrl: string) => void;
 }
 
 const GraphContext = createContext<GraphContextValue | null>(null);
@@ -333,98 +248,85 @@ export function GraphProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(graphReducer, initialState);
   const undoRef = useRef<UndoState>({ past: [], future: [] });
 
-  // v1 derived
   const selectedNode =
-    state.graph?.nodes.find((n) => n.id === state.selectedNodeId) ?? null;
-
-  const floorNodes =
-    state.selectedFloor !== null
-      ? state.graph?.nodes.filter((n) => n.floor_level === state.selectedFloor) ?? []
-      : [];
-
-  // v2 derived
-  const selectedMassNode =
-    state.massGraph?.nodes.find((n) => n.id === state.selectedNodeId) ?? null;
-
-  const massNodes = state.massGraph?.nodes ?? [];
-  const massRelations = state.massGraph?.relations ?? [];
+    state.graph?.nodes.find((node) => node.id === state.selectedNodeId) ?? null;
 
   const loadGraph = useCallback(async () => {
     dispatch({ type: "LOAD_GRAPH_START" });
     try {
-      // Try v2 first, fall back to v1
-      let resp = await fetch("/api/graph?version=2");
-      if (resp.ok) {
-        const data = await resp.json();
-        if (data.metadata?.version === 2) {
-          dispatch({ type: "LOAD_MASS_GRAPH_SUCCESS", massGraph: data });
-          undoRef.current = { past: [], future: [] };
-          return;
-        }
-      }
-      // Fallback to v1
-      resp = await fetch("/api/graph");
-      if (!resp.ok) throw new Error("Failed to load graph");
-      const data = await resp.json();
-      dispatch({ type: "LOAD_GRAPH_SUCCESS", graph: data });
+      const response = await fetch("/api/graph");
+      if (!response.ok) throw new Error("Failed to load graph");
+      const graph = withResolvedMassModel((await response.json()) as SpatialMassGraph);
+      dispatch({ type: "LOAD_GRAPH_SUCCESS", graph });
       undoRef.current = { past: [], future: [] };
-    } catch (e) {
+    } catch (error) {
       dispatch({
         type: "LOAD_GRAPH_ERROR",
-        error: e instanceof Error ? e.message : "Unknown error",
+        error: error instanceof Error ? error.message : "Unknown error",
       });
     }
   }, []);
 
-  // Editing actions that support undo
   const editDispatch = useCallback(
     (action: GraphAction) => {
-      const v1EditActions = ["UPDATE_NODE", "REMOVE_NODE", "ADD_NODE", "MOVE_NODE"];
-      const v2EditActions = ["UPDATE_MASS_NODE", "REMOVE_MASS_NODE", "ADD_MASS_NODE", "ADD_MASS_RELATION", "REMOVE_MASS_RELATION"];
-
-      const currentGraph = state.graphVersion === 2 ? state.massGraph : state.graph;
-      if ((v1EditActions.includes(action.type) || v2EditActions.includes(action.type)) && currentGraph) {
+      if (
+        ["UPDATE_NODE", "REMOVE_NODE", "ADD_NODE"].includes(action.type) &&
+        state.graph
+      ) {
         const undo = undoRef.current;
-        undo.past = [...undo.past.slice(-(MAX_HISTORY - 1)), currentGraph];
+        undo.past = [...undo.past.slice(-(MAX_HISTORY - 1)), state.graph];
         undo.future = [];
       }
       dispatch(action);
     },
-    [state.graph, state.massGraph, state.graphVersion]
+    [state.graph]
   );
 
   const undo = useCallback(() => {
-    const h = undoRef.current;
-    if (h.past.length === 0) return;
-    const prev = h.past[h.past.length - 1];
-    h.past = h.past.slice(0, -1);
-
-    if (state.graphVersion === 2 && state.massGraph) {
-      h.future = [...h.future, state.massGraph];
-      dispatch({ type: "SET_MASS_GRAPH", massGraph: prev as SpatialMassGraph });
-    } else if (state.graph) {
-      h.future = [...h.future, state.graph];
-      dispatch({ type: "SET_GRAPH", graph: prev as VerticalNodeGraph });
-    }
-  }, [state.graph, state.massGraph, state.graphVersion]);
+    const history = undoRef.current;
+    if (history.past.length === 0 || !state.graph) return;
+    const previous = history.past[history.past.length - 1];
+    history.past = history.past.slice(0, -1);
+    history.future = [...history.future, state.graph];
+    dispatch({ type: "SET_GRAPH", graph: previous });
+  }, [state.graph]);
 
   const redo = useCallback(() => {
-    const h = undoRef.current;
-    if (h.future.length === 0) return;
-    const next = h.future[h.future.length - 1];
-    h.future = h.future.slice(0, -1);
-
-    if (state.graphVersion === 2 && state.massGraph) {
-      h.past = [...h.past, state.massGraph];
-      dispatch({ type: "SET_MASS_GRAPH", massGraph: next as SpatialMassGraph });
-    } else if (state.graph) {
-      h.past = [...h.past, state.graph];
-      dispatch({ type: "SET_GRAPH", graph: next as VerticalNodeGraph });
-    }
-  }, [state.graph, state.massGraph, state.graphVersion]);
+    const history = undoRef.current;
+    if (history.future.length === 0 || !state.graph) return;
+    const next = history.future[history.future.length - 1];
+    history.future = history.future.slice(0, -1);
+    history.past = [...history.past, state.graph];
+    dispatch({ type: "SET_GRAPH", graph: next });
+  }, [state.graph]);
 
   const canUndo = undoRef.current.past.length > 0;
   const canRedo = undoRef.current.future.length > 0;
+
+  const regenerateVariant = useCallback(() => {
+    if (!state.graph) return;
+    const nextIndex = state.variantHistory.length + 1;
+    const seed =
+      Math.floor(Date.now() % 2147483647) +
+      nextIndex * 7919 +
+      state.graph.nodes.length * 97 +
+      state.graph.relations.length * 193;
+    const variantLabel = `V${String(nextIndex).padStart(2, "0")}`;
+    const resolvedModel = resolveSpatialMassModel(state.graph, {
+      seed,
+      variant_id: `variant-${seed}`,
+      variant_label: variantLabel,
+    });
+    dispatch({ type: "ADD_MODEL_VARIANT", resolvedModel });
+  }, [state.graph, state.variantHistory.length]);
+
+  const activateVariant = useCallback((variantId: string) => {
+    dispatch({ type: "SET_ACTIVE_VARIANT", variantId });
+  }, []);
+
+  const setVariantPreview = useCallback((variantId: string, previewDataUrl: string) => {
+    dispatch({ type: "SET_VARIANT_PREVIEW", variantId, previewDataUrl });
+  }, []);
 
   return (
     <GraphContext.Provider
@@ -432,16 +334,17 @@ export function GraphProvider({ children }: { children: React.ReactNode }) {
         state,
         dispatch,
         selectedNode,
-        floorNodes,
-        selectedMassNode,
-        massNodes,
-        massRelations,
         loadGraph,
         undo,
         redo,
         canUndo,
         canRedo,
         editDispatch,
+        variantHistory: state.variantHistory,
+        activeVariantId: state.activeVariantId,
+        regenerateVariant,
+        activateVariant,
+        setVariantPreview,
       }}
     >
       {children}
@@ -450,7 +353,7 @@ export function GraphProvider({ children }: { children: React.ReactNode }) {
 }
 
 export function useGraph() {
-  const ctx = useContext(GraphContext);
-  if (!ctx) throw new Error("useGraph must be used within GraphProvider");
-  return ctx;
+  const context = useContext(GraphContext);
+  if (!context) throw new Error("useGraph must be used within GraphProvider");
+  return context;
 }

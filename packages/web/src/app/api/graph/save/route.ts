@@ -1,25 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import * as fs from "fs";
 import * as path from "path";
+import { withResolvedMassModel } from "@gim/core/graph/resolved-model";
 
 export async function POST(request: NextRequest) {
-  const graphPath = path.resolve(process.cwd(), "../../graph_output");
+  const graphPath = path.resolve(process.cwd(), "../../graph_output/spatial_mass_graph.json");
+  const backupPath = graphPath + ".backup";
 
   try {
-    const data = await request.json();
+    const graph = withResolvedMassModel(await request.json());
 
-    // Detect version
-    const isV2 = data.metadata?.version === 2;
-    const filename = isV2 ? "spatial_mass_graph.json" : "vertical_node_graph.json";
-    const filePath = path.join(graphPath, filename);
-    const backupPath = filePath + ".backup";
-
-    if (fs.existsSync(filePath)) {
-      fs.copyFileSync(filePath, backupPath);
+    // Create backup before overwriting
+    if (fs.existsSync(graphPath)) {
+      fs.copyFileSync(graphPath, backupPath);
     }
 
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), "utf-8");
-    return NextResponse.json({ success: true, file: filename });
+    fs.writeFileSync(graphPath, JSON.stringify(graph, null, 2), "utf-8");
+
+    return NextResponse.json({ success: true });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Save failed" },

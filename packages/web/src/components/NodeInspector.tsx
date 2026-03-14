@@ -1,545 +1,206 @@
 "use client";
 
-import React, { useRef, useEffect } from "react";
+import React from "react";
 import { useGraph } from "@/lib/graph-context";
-import { FUNC_COLORS, EDGE_COLORS, floorLabel } from "@/lib/graph-colors";
-import {
-  generateFloorOutline,
-  getDominantFormDNA,
-  getFloorFormDNA,
-} from "@/lib/architect-form";
+import { KIND_COLORS, RELATION_COLORS } from "@/lib/graph-colors";
 
 export function NodeInspector() {
-  const { state, selectedNode, floorNodes, dispatch } = useGraph();
+  const { state, selectedNode, dispatch, variantHistory, activeVariantId } = useGraph();
   const { graph } = state;
 
   if (!graph) return null;
 
-  const showFloorPlan = state.selectedFloor !== null && floorNodes.length > 0;
+  const activeVariant = variantHistory.find((variant) => variant.id === activeVariantId) ?? null;
 
-  return (
-    <>
-      <div style={titleStyle}>Node Inspector</div>
-      <div style={contentStyle}>
-        {/* Floor plan always visible when a floor is selected */}
-        {showFloorPlan && (
-          <FloorDetail
-            floor={state.selectedFloor!}
-            nodes={floorNodes}
-            dispatch={dispatch}
-            selectedNodeId={state.selectedNodeId}
-          />
-        )}
-
-        {/* Node detail below the floor plan when a node is selected */}
-        {selectedNode && (
-          <NodeDetail node={selectedNode} graph={graph} dispatch={dispatch} />
-        )}
-
-        {!showFloorPlan && !selectedNode && (
-          <span style={{ color: "#444" }}>Select a floor to inspect</span>
-        )}
-      </div>
-      <StatsPanel graph={graph} />
-    </>
-  );
-}
-
-function NodeDetail({
-  node,
-  graph,
-  dispatch,
-}: {
-  node: any;
-  graph: any;
-  dispatch: any;
-}) {
-  const neighbors: { node: any; edge: any }[] = [];
-  for (const e of graph.edges) {
-    if (e.source === node.id) {
-      const t = graph.nodes.find((n: any) => n.id === e.target);
-      if (t) neighbors.push({ node: t, edge: e });
-    }
-    if (e.target === node.id) {
-      const s = graph.nodes.find((n: any) => n.id === e.source);
-      if (s) neighbors.push({ node: s, edge: e });
-    }
-  }
-
-  const byType: Record<string, typeof neighbors> = {};
-  for (const n of neighbors) {
-    if (!byType[n.edge.type]) byType[n.edge.type] = [];
-    byType[n.edge.type].push(n);
-  }
-
-  return (
-    <>
-      <Section title={node.name}>
-        <Row k="ID" v={node.id} />
-        <Row k="Floor" v={floorLabel(node.floor_level)} />
-        <Row k="Zone" v={node.floor_zone} />
-        <Row k="Function" v={node.function.replace(/_/g, " ")} />
-        <Row k="Position" v={node.position} />
-      </Section>
-
-      <Section title="Abstract Properties">
-        {Object.entries(node.abstract).map(([key, val]) => {
-          const pct = Math.round((val as number) * 100);
-          const color = pct > 70 ? "#8f8" : pct > 40 ? "#ff8" : "#f88";
-          return (
-            <div key={key}>
-              <Row k={key.replace(/_/g, " ")} v={pct + "%"} />
-              <div style={barWrapStyle}>
-                <div
-                  style={{ ...barFillStyle, width: pct + "%", background: color }}
-                />
-              </div>
-            </div>
-          );
-        })}
-      </Section>
-
-      {node.tags?.length > 0 && (
-        <Section title="Tags">
-          <span style={{ color: "#ccc" }}>{node.tags.join(", ")}</span>
-        </Section>
-      )}
-
-      {neighbors.length > 0 && (
-        <Section title={`Connections (${neighbors.length})`}>
-          {Object.entries(byType).map(([type, items]) => (
-            <div key={type}>
-              <div
-                style={{
-                  color: EDGE_COLORS[type] || "#888",
-                  marginTop: 4,
-                  fontSize: 9,
-                }}
-              >
-                {type} ({items.length})
-              </div>
-              {items.slice(0, 4).map((item) => (
-                <div
-                  key={item.node.id + item.edge.type}
-                  style={{
-                    color: "#555",
-                    cursor: "pointer",
-                    paddingLeft: 6,
-                    fontSize: 10,
-                  }}
-                  onClick={() =>
-                    dispatch({ type: "SELECT_NODE", nodeId: item.node.id })
-                  }
-                >
-                  {item.node.id}
+  if (!selectedNode) {
+    return (
+      <>
+        <div style={titleStyle}>Mass Inspector</div>
+        <div style={contentStyle}>
+          {activeVariant && (
+            <Section title="Resolved Variant">
+              <Row k="Current" v={activeVariant.label} />
+              <Row k="Seed" v={String(activeVariant.seed)} />
+              <Row k="Generated" v={activeVariant.generatedAt.replace("T", " ").slice(0, 16)} />
+            </Section>
+          )}
+          <Section title="Project">
+            <p style={paragraphStyle}>{graph.narrative.project_intro}</p>
+          </Section>
+          <Section title="Concept">
+            <p style={paragraphStyle}>{graph.narrative.overall_architectural_concept}</p>
+          </Section>
+          <Section title="Image Direction">
+            <p style={paragraphStyle}>{graph.narrative.image_direction}</p>
+          </Section>
+          <Section title="Synthesis">
+            <p style={paragraphStyle}>{graph.narrative.massing_strategy_summary}</p>
+            <p style={paragraphStyle}>{graph.narrative.public_to_private_sequence}</p>
+            <p style={paragraphStyle}>{graph.narrative.facade_and_material_summary}</p>
+          </Section>
+          {graph.narrative.node_summaries.length > 0 && (
+            <Section title="Key Masses">
+              {graph.narrative.node_summaries.slice(0, 5).map((summary) => {
+                const node = graph.nodes.find((item) => item.id === summary.node_id);
+                return (
+                  <button
+                    key={summary.node_id}
+                    onClick={() => dispatch({ type: "SELECT_NODE", nodeId: summary.node_id })}
+                    style={summaryCardStyle}
+                  >
+                    <div style={{ color: "#dce7ff", fontSize: 11 }}>
+                      {node?.name ?? summary.node_id}
+                    </div>
+                    <div style={{ color: "#9fb0c6", fontSize: 10, lineHeight: 1.6 }}>
+                      {summary.summary}
+                    </div>
+                    <div style={{ color: "#6d7787", fontSize: 10 }}>
+                      {summary.relationship_summary}
+                    </div>
+                  </button>
+                );
+              })}
+            </Section>
+          )}
+          {graph.provenance.architect_contributions.length > 0 && (
+            <Section title="Contributors">
+              {graph.provenance.architect_contributions.map((contribution) => (
+                <div key={contribution.architect_id} style={influenceRowStyle}>
+                  <div style={{ color: "#d6dce8" }}>{contribution.architect_id}</div>
+                  <div style={{ color: "#7b8aa3", fontSize: 10 }}>{contribution.emphasis}</div>
                 </div>
               ))}
-              {items.length > 4 && (
-                <div style={{ color: "#333", paddingLeft: 6 }}>
-                  +{items.length - 4} more
-                </div>
-              )}
-            </div>
-          ))}
-        </Section>
-      )}
-    </>
-  );
-}
-
-function FloorDetail({
-  floor,
-  nodes,
-  dispatch,
-  selectedNodeId,
-}: {
-  floor: number;
-  nodes: any[];
-  dispatch: any;
-  selectedNodeId: string | null;
-}) {
-  const { state } = useGraph();
-  const graph = state.graph;
-
-  // Compute floor stats
-  const zone = nodes[0]?.floor_zone || "?";
-  const ceilingH = nodes[0]?.ceiling_height || 3.8;
-  const styleRef = nodes.find((n: any) => n.style_ref && n.style_ref !== "none")?.style_ref;
-
-  // Group by function
-  const funcGroups: Record<string, any[]> = {};
-  for (const n of nodes) {
-    const fn = n.function;
-    if (!funcGroups[fn]) funcGroups[fn] = [];
-    funcGroups[fn].push(n);
+            </Section>
+          )}
+        </div>
+        <StatsPanel
+          items={[
+            ["Masses", graph.nodes.length],
+            ["Relations", graph.relations.length],
+            ["Variants", variantHistory.length],
+          ]}
+        />
+      </>
+    );
   }
 
-  // Count connections to other floors
-  const interFloorEdges = graph
-    ? graph.edges.filter((e: any) => {
-        const src = graph.nodes.find((n: any) => n.id === e.source);
-        const tgt = graph.nodes.find((n: any) => n.id === e.target);
-        return src && tgt && (src.floor_level === floor || tgt.floor_level === floor)
-          && src.floor_level !== tgt.floor_level;
-      }).length
-    : 0;
+  const resolvedNode =
+    graph.resolved_model.nodes.find((node) => node.node_id === selectedNode.id) ?? null;
+  const relations = graph.relations.filter(
+    (relation) => relation.source === selectedNode.id || relation.target === selectedNode.id
+  );
 
   return (
     <>
-      <Section title={`${floorLabel(floor)} — Section`}>
-        <FloorPlanCanvas floor={floor} nodes={nodes} graph={graph} dispatch={dispatch} selectedNodeId={selectedNodeId} />
-      </Section>
+      <div style={titleStyle}>Mass Inspector</div>
+      <div style={contentStyle}>
+        <Section title={selectedNode.name}>
+          <Row k="ID" v={selectedNode.id} />
+          <Row k="Kind" v={selectedNode.kind} color={KIND_COLORS[selectedNode.kind]} />
+          <Row k="Hierarchy" v={selectedNode.hierarchy} />
+          <Row k="Role" v={selectedNode.spatial_role} />
+          <Row k="Anchor" v={selectedNode.relative_position.anchor_to || "-"} />
+        </Section>
 
-      <Section title="Floor Info">
-        <Row k="Zone" v={zone} />
-        <Row k="Ceiling" v={`${ceilingH}m`} />
-        <Row k="Nodes" v={String(nodes.length)} />
-        <Row k="Inter-floor" v={`${interFloorEdges} edges`} />
-        {styleRef && <Row k="Style" v={styleRef.replace(/_/g, " ")} />}
-      </Section>
+        <Section title="Geometry">
+          <Row k="Primitive" v={selectedNode.geometry.primitive} />
+          <Row k="Width" v={selectedNode.geometry.width} />
+          <Row k="Depth" v={selectedNode.geometry.depth} />
+          <Row k="Height" v={selectedNode.geometry.height} />
+          <Row k="Placement" v={selectedNode.geometry.vertical_placement} />
+          <Row k="Skin" v={selectedNode.geometry.skin} />
+          <Row k="Porosity" v={selectedNode.geometry.porosity} />
+        </Section>
 
-      <Section title="Program">
-        {Object.entries(funcGroups).map(([fn, fnNodes]) => (
-          <div
-            key={fn}
-            style={programRowStyle}
-            onClick={() => dispatch({ type: "SELECT_NODE", nodeId: fnNodes[0].id })}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <div style={{
-                width: 8, height: 8, borderRadius: 2,
-                background: FUNC_COLORS[fn] || "#555",
-                flexShrink: 0,
-              }} />
-              <span style={{ color: "#bbb", fontSize: 10 }}>
-                {fn.replace(/_/g, " ")}
-              </span>
+        {resolvedNode && (
+          <Section title="Resolved Variant">
+            <Row k="Variant" v={activeVariant?.label ?? "-"} />
+            <Row k="Width" v={`${resolvedNode.dimensions.width}m`} />
+            <Row k="Depth" v={`${resolvedNode.dimensions.depth}m`} />
+            <Row k="Height" v={`${resolvedNode.dimensions.height}m`} />
+            <Row k="X" v={`${resolvedNode.transform.x}m`} />
+            <Row k="Y" v={`${resolvedNode.transform.y}m`} />
+            <Row k="Z" v={`${resolvedNode.transform.z}m`} />
+          </Section>
+        )}
+
+        <Section title="Narrative">
+          <p style={paragraphStyle}>{selectedNode.narrative.intent}</p>
+          <p style={paragraphStyle}>{selectedNode.narrative.spatial_character}</p>
+          <p style={paragraphStyle}>{selectedNode.narrative.facade_material_light}</p>
+          <p style={paragraphStyle}>{selectedNode.narrative.image_prompt_notes}</p>
+        </Section>
+
+        {selectedNode.narrative.keywords.length > 0 && (
+          <Section title="Keywords">
+            <div style={tagWrapStyle}>
+              {selectedNode.narrative.keywords.map((keyword) => (
+                <span key={keyword} style={tagStyle}>
+                  {keyword}
+                </span>
+              ))}
             </div>
-            <span style={{ color: "#666", fontSize: 9 }}>
-              {fnNodes.length > 1 ? `×${fnNodes.length}` : fnNodes[0].position}
-            </span>
-          </div>
-        ))}
-      </Section>
+          </Section>
+        )}
+
+        {selectedNode.architect_influences.length > 0 && (
+          <Section title="Architect Influence">
+            {selectedNode.architect_influences.map((influence) => (
+              <div key={influence.architect_id} style={influenceRowStyle}>
+                <div style={{ color: "#d6dce8" }}>
+                  {influence.architect_id} ({Math.round(influence.weight * 100)}%)
+                </div>
+                <div style={{ color: "#7b8aa3", fontSize: 10 }}>{influence.contribution}</div>
+              </div>
+            ))}
+          </Section>
+        )}
+
+        {relations.length > 0 && (
+          <Section title={`Relations (${relations.length})`}>
+            {relations.map((relation) => {
+              const otherId = relation.source === selectedNode.id ? relation.target : relation.source;
+              return (
+                <button
+                  key={relation.id}
+                  onClick={() => dispatch({ type: "SELECT_NODE", nodeId: otherId })}
+                  style={relationButtonStyle}
+                >
+                  <span style={{ color: RELATION_COLORS[relation.family] || "#9fb0c6" }}>
+                    {relation.family}/{relation.rule}
+                  </span>
+                  <span style={{ color: "#d6dce8" }}>{otherId}</span>
+                </button>
+              );
+            })}
+          </Section>
+        )}
+      </div>
+      <StatsPanel
+        items={[
+          ["Relations", relations.length],
+          ["Influences", selectedNode.architect_influences.length],
+          ["Keywords", selectedNode.narrative.keywords.length],
+        ]}
+      />
     </>
   );
 }
 
-/**
- * Canvas-drawn floor plan showing the outline + node positions as a simple section diagram.
- */
-function FloorPlanCanvas({
-  floor,
-  nodes,
-  graph,
-  dispatch,
-  selectedNodeId,
-}: {
-  floor: number;
-  nodes: any[];
-  graph: any;
-  dispatch: any;
-  selectedNodeId: string | null;
-}) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !graph) return;
-
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    const dpr = window.devicePixelRatio || 1;
-    const W = 248;
-    const H = 200;
-    canvas.width = W * dpr;
-    canvas.height = H * dpr;
-    canvas.style.width = W + "px";
-    canvas.style.height = H + "px";
-    ctx.scale(dpr, dpr);
-
-    // Clear
-    ctx.fillStyle = "#0e0e16";
-    ctx.fillRect(0, 0, W, H);
-
-    // Compute outline
-    const [siteW, siteD] = graph.global.site.dimensions;
-    const bcr = graph.global.site.bcr / 100;
-    const footprint = siteW * siteD * bcr;
-    const baseW = Math.sqrt(footprint * (siteW / siteD));
-    const baseD = footprint / baseW;
-
-    const allStyles = graph.nodes.map((n: any) => n.style_ref);
-    const dominantDNA = getDominantFormDNA(allStyles);
-    const floorStyle = nodes.find((n: any) => n.style_ref && n.style_ref !== "none")?.style_ref;
-    const floorDNA = getFloorFormDNA(floorStyle, dominantDNA);
-
-    const aboveFloors = Array.from(new Set(graph.nodes.map((n: any) => n.floor_level)))
-      .filter((f: any) => f >= 0).sort((a: any, b: any) => a - b) as number[];
-    const aboveIdx = Math.max(0, aboveFloors.indexOf(floor));
-    const totalAbove = aboveFloors.length;
-
-    const groundScale = floor <= 1 ? floorDNA.groundExpansion : 1;
-    const outline = generateFloorOutline(floorDNA, baseW * groundScale, baseD * groundScale, aboveIdx, totalAbove);
-
-    // Compute bounds for scaling
-    let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-    for (const [x, z] of outline) {
-      minX = Math.min(minX, x); maxX = Math.max(maxX, x);
-      minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
-    }
-    const rangeX = maxX - minX || 1;
-    const rangeZ = maxZ - minZ || 1;
-    const pad = 28;
-    const scale = Math.min((W - pad * 2) / rangeX, (H - pad * 2) / rangeZ);
-    const cx = W / 2;
-    const cy = H / 2;
-    const ox = (minX + maxX) / 2;
-    const oz = (minZ + maxZ) / 2;
-
-    const toScreen = (x: number, z: number): [number, number] => [
-      cx + (x - ox) * scale,
-      cy + (z - oz) * scale,
-    ];
-
-    // Draw outline fill
-    ctx.beginPath();
-    const [sx, sy] = toScreen(outline[0][0], outline[0][1]);
-    ctx.moveTo(sx, sy);
-    for (let i = 1; i < outline.length; i++) {
-      const [px, py] = toScreen(outline[i][0], outline[i][1]);
-      ctx.lineTo(px, py);
-    }
-    ctx.closePath();
-    ctx.fillStyle = "#161822";
-    ctx.fill();
-    ctx.strokeStyle = "#3a4058";
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-
-    // Draw core (center rectangle)
-    const coreW = baseW * 0.12 * scale;
-    const coreD = baseD * 0.12 * scale;
-    ctx.fillStyle = "#252838";
-    ctx.strokeStyle = "#4a5068";
-    ctx.lineWidth = 1;
-    ctx.fillRect(cx - coreW / 2, cy - coreD / 2, coreW, coreD);
-    ctx.strokeRect(cx - coreW / 2, cy - coreD / 2, coreW, coreD);
-
-    // Draw core label
-    ctx.fillStyle = "#555";
-    ctx.font = "8px monospace";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("CORE", cx, cy);
-
-    // Draw node positions as colored zones
-    const fW = baseW * groundScale;
-    const fD = baseD * groundScale;
-
-    // Draw non-selected nodes first (dimmed if something is selected)
-    for (const node of nodes) {
-      const pos = nodePosition(node.position, fW, fD);
-      const [nx, ny] = toScreen(pos.x, pos.z);
-      const color = FUNC_COLORS[node.function] || "#555";
-      const isCore = ["elevator_core", "stairwell", "elevator_lobby", "service_shaft"].includes(node.function);
-      if (isCore) continue;
-
-      const isSelected = node.id === selectedNodeId;
-      const dimmed = selectedNodeId && !isSelected;
-
-      // Zone bubble
-      const r = isSelected ? 14 : 10;
-      ctx.beginPath();
-      ctx.arc(nx, ny, r, 0, Math.PI * 2);
-      ctx.fillStyle = dimmed ? color + "10" : color + "30";
-      ctx.fill();
-      ctx.strokeStyle = dimmed ? color + "30" : color + "80";
-      ctx.lineWidth = isSelected ? 2 : 1;
-      ctx.stroke();
-
-      // Selected highlight ring
-      if (isSelected) {
-        ctx.beginPath();
-        ctx.arc(nx, ny, r + 3, 0, Math.PI * 2);
-        ctx.strokeStyle = "#fff";
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-
-        // Glow effect
-        ctx.beginPath();
-        ctx.arc(nx, ny, r + 6, 0, Math.PI * 2);
-        ctx.strokeStyle = color + "40";
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      }
-
-      // Dot center
-      ctx.beginPath();
-      ctx.arc(nx, ny, isSelected ? 4.5 : 3, 0, Math.PI * 2);
-      ctx.fillStyle = dimmed ? color + "50" : color;
-      ctx.fill();
-
-      // Label
-      ctx.fillStyle = dimmed ? color + "40" : color;
-      ctx.font = isSelected ? "bold 8px monospace" : "7px monospace";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "top";
-      const label = node.function.replace(/_/g, " ");
-      ctx.fillText(label.length > 12 ? label.slice(0, 11) + "…" : label, nx, ny + r + 2);
-    }
-
-    // Draw intra-floor edges
-    if (graph) {
-      const floorNodeIds = new Set(nodes.map((n: any) => n.id));
-      const intraEdges = graph.edges.filter((e: any) =>
-        floorNodeIds.has(e.source) && floorNodeIds.has(e.target)
-      );
-      ctx.strokeStyle = "#3a4068";
-      ctx.lineWidth = 0.5;
-      ctx.setLineDash([3, 3]);
-      for (const e of intraEdges) {
-        const srcNode = nodes.find((n: any) => n.id === e.source);
-        const tgtNode = nodes.find((n: any) => n.id === e.target);
-        if (!srcNode || !tgtNode) continue;
-        const srcPos = nodePosition(srcNode.position, fW, fD);
-        const tgtPos = nodePosition(tgtNode.position, fW, fD);
-        const [x1, y1] = toScreen(srcPos.x, srcPos.z);
-        const [x2, y2] = toScreen(tgtPos.x, tgtPos.z);
-        ctx.beginPath();
-        ctx.moveTo(x1, y1);
-        ctx.lineTo(x2, y2);
-        ctx.stroke();
-      }
-      ctx.setLineDash([]);
-    }
-
-    // North arrow
-    ctx.fillStyle = "#4a6088";
-    ctx.font = "bold 9px monospace";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "bottom";
-    ctx.fillText("N", W - 16, 18);
-    ctx.beginPath();
-    ctx.moveTo(W - 16, 20);
-    ctx.lineTo(W - 19, 26);
-    ctx.lineTo(W - 13, 26);
-    ctx.closePath();
-    ctx.fill();
-
-    // Floor label
-    ctx.fillStyle = "#666";
-    ctx.font = "bold 10px monospace";
-    ctx.textAlign = "left";
-    ctx.textBaseline = "top";
-    ctx.fillText(floorLabel(floor), 8, 8);
-
-  }, [floor, nodes, graph, selectedNodeId]);
-
-  return (
-    <canvas
-      ref={canvasRef}
-      style={floorPlanCanvasStyle}
-      onClick={(e) => {
-        // Click-to-select node from the plan
-        const canvas = canvasRef.current;
-        if (!canvas || !graph) return;
-        const rect = canvas.getBoundingClientRect();
-        const mx = e.clientX - rect.left;
-        const my = e.clientY - rect.top;
-
-        const [siteW, siteD] = graph.global.site.dimensions;
-        const bcr = graph.global.site.bcr / 100;
-        const footprint = siteW * siteD * bcr;
-        const baseW = Math.sqrt(footprint * (siteW / siteD));
-        const baseD = footprint / baseW;
-        const allStyles = graph.nodes.map((n: any) => n.style_ref);
-        const dominantDNA = getDominantFormDNA(allStyles);
-        const floorStyle = nodes.find((n: any) => n.style_ref && n.style_ref !== "none")?.style_ref;
-        const floorDNA = getFloorFormDNA(floorStyle, dominantDNA);
-        const groundScale = floor <= 1 ? floorDNA.groundExpansion : 1;
-        const fW = baseW * groundScale;
-        const fD = baseD * groundScale;
-
-        const outline = generateFloorOutline(floorDNA, fW, fD, 0, 1);
-        let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
-        for (const [x, z] of outline) {
-          minX = Math.min(minX, x); maxX = Math.max(maxX, x);
-          minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
-        }
-        const rangeX = maxX - minX || 1;
-        const rangeZ = maxZ - minZ || 1;
-        const W = 248, H = 200, pad = 28;
-        const scale = Math.min((W - pad * 2) / rangeX, (H - pad * 2) / rangeZ);
-        const cx = W / 2, cy = H / 2;
-        const ox = (minX + maxX) / 2, oz = (minZ + maxZ) / 2;
-
-        let closest: any = null;
-        let closestDist = 15;
-        for (const node of nodes) {
-          const pos = nodePosition(node.position, fW, fD);
-          const sx = cx + (pos.x - ox) * scale;
-          const sy = cy + (pos.z - oz) * scale;
-          const d = Math.sqrt((mx - sx) ** 2 + (my - sy) ** 2);
-          if (d < closestDist) {
-            closestDist = d;
-            closest = node;
-          }
-        }
-        // Select node or deselect if clicking empty space
-        dispatch({ type: "SELECT_NODE", nodeId: closest?.id ?? null });
-      }}
-    />
-  );
-}
-
-function nodePosition(pos: string, floorW: number, floorD: number): { x: number; z: number } {
-  const rx = floorW * 0.32;
-  const rz = floorD * 0.32;
-  switch (pos) {
-    case "north":     return { x: 0,   z: rz };
-    case "south":     return { x: 0,   z: -rz };
-    case "east":      return { x: rx,  z: 0 };
-    case "west":      return { x: -rx, z: 0 };
-    case "northeast": return { x: rx * 0.7,  z: rz * 0.7 };
-    case "northwest": return { x: -rx * 0.7, z: rz * 0.7 };
-    case "southeast": return { x: rx * 0.7,  z: -rz * 0.7 };
-    case "southwest": return { x: -rx * 0.7, z: -rz * 0.7 };
-    default:          return { x: 0, z: 0 };
-  }
-}
-
-function StatsPanel({ graph }: { graph: any }) {
-  const zones = new Set(graph.nodes.map((n: any) => n.floor_zone));
-  const data = [
-    ["Nodes", graph.nodes.length],
-    ["Edges", graph.edges.length],
-    ["Zones", zones.size],
-    ["Floor Range", graph.metadata.floor_range[0] + " ~ " + graph.metadata.floor_range[1]],
-  ];
-
+function StatsPanel({ items }: { items: Array<[string, number]> }) {
   return (
     <div style={statsPanelStyle}>
-      {data.map(([label, val]) => (
-        <div key={String(label)} style={statsRowStyle}>
-          <span style={{ color: "#555", fontSize: 10 }}>{label}</span>
-          <span style={{ color: "#8f8", fontWeight: "bold", fontSize: 10 }}>
-            {String(val)}
-          </span>
+      {items.map(([label, value]) => (
+        <div key={label} style={statsRowStyle}>
+          <span style={{ color: "#596273", fontSize: 10 }}>{label}</span>
+          <span style={{ color: "#dce7ff", fontSize: 10 }}>{value}</span>
         </div>
       ))}
     </div>
   );
 }
 
-function Section({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div style={{ marginBottom: 14 }}>
       <h4 style={sectionTitleStyle}>{title}</h4>
@@ -548,11 +209,11 @@ function Section({
   );
 }
 
-function Row({ k, v }: { k: string; v: string }) {
+function Row({ k, v, color }: { k: string; v: string; color?: string }) {
   return (
     <div style={rowStyle}>
-      <span style={{ color: "#555" }}>{k}</span>
-      <span style={{ color: "#ccc" }}>{v}</span>
+      <span style={{ color: "#596273" }}>{k}</span>
+      <span style={{ color: color || "#d6dce8" }}>{v}</span>
     </div>
   );
 }
@@ -561,7 +222,7 @@ const titleStyle: React.CSSProperties = {
   padding: "14px 16px",
   borderBottom: "1px solid #1a1a2e",
   fontSize: 12,
-  color: "#888",
+  color: "#8d98a7",
 };
 
 const contentStyle: React.CSSProperties = {
@@ -573,7 +234,7 @@ const contentStyle: React.CSSProperties = {
 };
 
 const sectionTitleStyle: React.CSSProperties = {
-  color: "#666",
+  color: "#667085",
   fontSize: 9,
   textTransform: "uppercase",
   letterSpacing: 1,
@@ -584,19 +245,61 @@ const sectionTitleStyle: React.CSSProperties = {
 const rowStyle: React.CSSProperties = {
   display: "flex",
   justifyContent: "space-between",
+  gap: 12,
   padding: "2px 0",
 };
 
-const barWrapStyle: React.CSSProperties = {
-  height: 3,
-  background: "#1a1a2e",
-  borderRadius: 2,
-  marginTop: 2,
+const paragraphStyle: React.CSSProperties = {
+  color: "#d6dce8",
+  margin: 0,
+  marginBottom: 6,
 };
 
-const barFillStyle: React.CSSProperties = {
-  height: "100%",
-  borderRadius: 2,
+const tagWrapStyle: React.CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 6,
+};
+
+const tagStyle: React.CSSProperties = {
+  fontSize: 10,
+  color: "#d6dce8",
+  background: "#171c28",
+  borderRadius: 999,
+  padding: "2px 8px",
+};
+
+const influenceRowStyle: React.CSSProperties = {
+  marginBottom: 8,
+};
+
+const summaryCardStyle: React.CSSProperties = {
+  width: "100%",
+  background: "#111520",
+  border: "1px solid #232938",
+  borderRadius: 8,
+  padding: "10px 12px",
+  textAlign: "left",
+  display: "flex",
+  flexDirection: "column",
+  gap: 6,
+  cursor: "pointer",
+  marginBottom: 8,
+  fontFamily: "inherit",
+};
+
+const relationButtonStyle: React.CSSProperties = {
+  width: "100%",
+  background: "#111520",
+  border: "1px solid #232938",
+  borderRadius: 8,
+  padding: "8px 10px",
+  display: "flex",
+  justifyContent: "space-between",
+  cursor: "pointer",
+  textAlign: "left",
+  marginBottom: 6,
+  fontFamily: "inherit",
 };
 
 const statsPanelStyle: React.CSSProperties = {
@@ -609,20 +312,4 @@ const statsRowStyle: React.CSSProperties = {
   display: "flex",
   justifyContent: "space-between",
   padding: "2px 0",
-};
-
-const programRowStyle: React.CSSProperties = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-  padding: "3px 0",
-  cursor: "pointer",
-};
-
-const floorPlanCanvasStyle: React.CSSProperties = {
-  width: 248,
-  height: 200,
-  borderRadius: 4,
-  border: "1px solid #1a1a2e",
-  cursor: "crosshair",
 };

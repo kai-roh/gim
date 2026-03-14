@@ -1,5 +1,6 @@
 // ============================================================
-// Architect Clone Types (Corporate HQ)
+// Architect Forum Types
+// Primary output is now a spatial mass graph, not floor zoning.
 // ============================================================
 
 export interface ArchitectProfile {
@@ -38,20 +39,12 @@ export interface ArchitectProfile {
   };
 }
 
-// ============================================================
-// Expert Profile Types
-// ============================================================
-
 export interface ExpertProfile {
   id: string;
   type: "legal_regulatory" | "structural_engineering";
   focus_areas: string[];
   review_criteria: string[];
 }
-
-// ============================================================
-// Discussion Protocol Types
-// ============================================================
 
 export type DiscussionPhase =
   | "proposal"
@@ -62,25 +55,131 @@ export type DiscussionPhase =
   | "finalization"
   | "feedback_opinion";
 
-export interface VerticalZoneProposal {
-  zone: string;
-  floors: [number, number];
-  primary_function: string;
-  style_ref?: string;
+export type MassNodeKind = "solid" | "void" | "core" | "connector";
+export type NodeHierarchy = "primary" | "secondary" | "tertiary";
+export type MassPrimitive =
+  | "block"
+  | "bar"
+  | "plate"
+  | "ring"
+  | "tower"
+  | "bridge"
+  | "cylinder";
+export type RelativeScale = "xs" | "small" | "medium" | "large" | "xl";
+export type RelativeProportion = "compact" | "elongated" | "slender" | "broad";
+export type SkinTransparency = "opaque" | "mixed" | "transparent";
+export type Porosity = "solid" | "porous" | "open";
+export type RelativePlacement =
+  | "subgrade"
+  | "grounded"
+  | "low"
+  | "mid"
+  | "upper"
+  | "crown"
+  | "spanning";
+export type SpanCharacter = "single" | "stacked" | "multi_level";
+export type SurfaceOrientation = "orthogonal" | "diagonal" | "curved" | "radial";
+
+export interface MassGeometryProposal {
+  primitive: MassPrimitive;
+  width: RelativeScale;
+  depth: RelativeScale;
+  height: RelativeScale;
+  proportion: RelativeProportion;
+  skin: SkinTransparency;
+  porosity: Porosity;
+  vertical_placement: RelativePlacement;
+  span_character: SpanCharacter;
+  orientation: SurfaceOrientation;
+}
+
+export interface MassNarrativeProposal {
+  role: string;
+  intent: string;
+  spatial_character: string;
+  facade_material_light: string;
+  image_prompt_notes: string;
+  keywords: string[];
+}
+
+export interface ArchitectInfluenceProposal {
+  architect_id: string;
+  influence: number;
   rationale: string;
 }
 
+export interface MassNodeProposal {
+  id: string;
+  name: string;
+  kind: MassNodeKind;
+  hierarchy: NodeHierarchy;
+  spatial_role: string;
+  geometry: MassGeometryProposal;
+  relative_position: {
+    anchor_to?: string;
+    relation_hint?: string;
+  };
+  narrative: MassNarrativeProposal;
+  architect_influences?: ArchitectInfluenceProposal[];
+  properties?: Record<string, string>;
+}
+
+export type MassRelationFamily =
+  | "stack"
+  | "contact"
+  | "enclosure"
+  | "intersection"
+  | "connection"
+  | "alignment";
+
+export type MassRelationRule =
+  | "above"
+  | "below"
+  | "adjacent"
+  | "wraps"
+  | "inside"
+  | "contains"
+  | "penetrates"
+  | "linked"
+  | "offset_from"
+  | "aligned_with"
+  | "bridges_to"
+  | "rests_on";
+
+export interface MassRelationProposal {
+  source_id: string;
+  target_id: string;
+  family: MassRelationFamily;
+  rule: MassRelationRule;
+  strength: "hard" | "soft";
+  weight: number;
+  rationale: string;
+  geometry_effect?: "attach" | "separate" | "overlap" | "pierce" | "offset" | "bridge";
+}
+
 export interface StructuralProposal {
-  system: string;
-  core_type: string;
+  core_strategy: string;
+  load_transfer: string;
   special_elements: string[];
 }
 
+export interface DesignNarrativeProposal {
+  project_intro: string;
+  overall_architectural_concept: string;
+  massing_strategy_summary: string;
+  facade_and_material_summary: string;
+  public_to_private_sequence: string;
+  spatial_character_summary: string;
+  image_direction: string;
+}
+
 export interface DesignProposal {
-  vertical_zoning: VerticalZoneProposal[];
-  structural_system: StructuralProposal;
-  key_features: string[];
-  form_concept: string;
+  massing_concept: string;
+  structural_strategy: StructuralProposal;
+  key_moves: string[];
+  mass_entities: MassNodeProposal[];
+  mass_relations: MassRelationProposal[];
+  narrative: DesignNarrativeProposal;
 }
 
 // ============================================================
@@ -142,10 +241,6 @@ export interface ExpertReviewResponse {
   }[];
   summary: string;
 }
-
-// ============================================================
-// Forum Session Types
-// ============================================================
 
 export interface ProjectContext {
   company?: {

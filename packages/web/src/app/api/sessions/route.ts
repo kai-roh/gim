@@ -12,7 +12,7 @@ export interface SessionSummary {
   company: string;
   panel: string[];
   nodeCount: number;
-  edgeCount: number;
+  relationCount: number;
   hasGraph: boolean;
 }
 
@@ -38,14 +38,14 @@ export async function GET() {
         // Check for matching graph file
         const graphFile = path.join(GRAPH_OUTPUT_DIR, `graph_${id}.json`);
         let nodeCount = 0;
-        let edgeCount = 0;
+        let relationCount = 0;
         const hasGraph = fs.existsSync(graphFile);
         if (hasGraph) {
           try {
             const graphRaw = fs.readFileSync(graphFile, "utf-8");
             const graph = JSON.parse(graphRaw);
             nodeCount = graph.nodes?.length ?? 0;
-            edgeCount = graph.edges?.length ?? 0;
+            relationCount = graph.relations?.length ?? 0;
           } catch {}
         }
 
@@ -56,7 +56,7 @@ export async function GET() {
           company: forum.project?.company?.name ?? "Unknown",
           panel: forum.panel ?? [],
           nodeCount,
-          edgeCount,
+          relationCount,
           hasGraph,
         });
       } catch {

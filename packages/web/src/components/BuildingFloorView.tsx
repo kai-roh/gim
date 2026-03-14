@@ -1,648 +1,369 @@
 "use client";
 
 import React, { useMemo } from "react";
-import type { FloorNode } from "@gim/core";
+import type { SpatialMassGraph } from "@gim/core";
 import { useGraph } from "@/lib/graph-context";
-import {
-  ZONE_COLORS,
-  FUNC_COLORS,
-  EDGE_COLORS,
-  FUNC_ORDER,
-  MASS_TYPE_COLORS,
-  MASS_RELATION_COLORS,
-  floorLabel,
-} from "@/lib/graph-colors";
+import { useForum } from "@/lib/forum-context";
+import { HIERARCHY_COLORS, KIND_COLORS, RELATION_COLORS, massColor } from "@/lib/graph-colors";
 
-interface FloorGroup {
-  floor: number;
-  zone: string;
-  nodes: FloorNode[];
-}
-
-interface ZoneGroup {
-  zone: string;
-  floors: FloorGroup[];
+function formatTimestamp(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
 }
 
 export function BuildingFloorView() {
   const { state, dispatch } = useGraph();
-  const { graph, massGraph, graphVersion, selectedNodeId, selectedFloor, activeEdgeTypes } = state;
+  const { state: forumState } = useForum();
+  const { graph, selectedNodeId, activeRelationFamilies } = state;
 
-  // ---- V2: Mass list mode ----
-  if (graphVersion === 2 && massGraph) {
-    return <MassListView massGraph={massGraph} selectedNodeId={selectedNodeId} dispatch={dispatch} />;
-  }
-
-  // Connected node IDs for highlight
   const connectedIds = useMemo(() => {
     if (!graph || !selectedNodeId) return new Set<string>();
     const ids = new Set<string>();
-    for (const e of graph.edges) {
-      if (e.source === selectedNodeId) ids.add(e.target);
-      if (e.target === selectedNodeId) ids.add(e.source);
+    for (const relation of graph.relations) {
+      if (!activeRelationFamilies.has(relation.family)) continue;
+      if (relation.source === selectedNodeId) ids.add(relation.target);
+      if (relation.target === selectedNodeId) ids.add(relation.source);
     }
     return ids;
-  }, [graph, selectedNodeId]);
+  }, [graph, selectedNodeId, activeRelationFamilies]);
 
-  // Group floors by zone (top to bottom)
-  const zoneGroups = useMemo((): ZoneGroup[] => {
+  const hierarchyGroups = useMemo(() => {
     if (!graph) return [];
-
-    const byFloor = new Map<number, FloorNode[]>();
-    for (const n of graph.nodes) {
-      if (!byFloor.has(n.floor_level)) byFloor.set(n.floor_level, []);
-      byFloor.get(n.floor_level)!.push(n);
-    }
-
-    const floorGroups: FloorGroup[] = Array.from(byFloor.entries())
-      .sort(([a], [b]) => b - a) // top to bottom
-      .map(([floor, nodes]) => {
-        const sorted = [...nodes].sort(
-          (a, b) =>
-            (FUNC_ORDER.indexOf(a.function) ?? 99) -
-            (FUNC_ORDER.indexOf(b.function) ?? 99)
-        );
-        return { floor, zone: nodes[0]?.floor_zone || "?", nodes: sorted };
-      });
-
-    // Group consecutive floors into zones
-    const groups: ZoneGroup[] = [];
-    let currentZone: string | null = null;
-    let currentFloors: FloorGroup[] = [];
-
-    for (const fg of floorGroups) {
-      if (fg.zone !== currentZone) {
-        if (currentZone && currentFloors.length > 0) {
-          groups.push({ zone: currentZone, floors: currentFloors });
-        }
-        currentZone = fg.zone;
-        currentFloors = [fg];
-      } else {
-        currentFloors.push(fg);
-      }
-    }
-    if (currentZone && currentFloors.length > 0) {
-      groups.push({ zone: currentZone, floors: currentFloors });
-    }
-
-    return groups;
+    const order = ["primary", "secondary", "tertiary"];
+    return order.map((hierarchy) => ({
+      hierarchy,
+      nodes: graph.nodes.filter((node) => node.hierarchy === hierarchy),
+    }));
   }, [graph]);
 
-  // Edge types present in graph
-  const edgeTypes = useMemo(() => {
+  const relationFamilies = useMemo(() => {
     if (!graph) return [];
-    return [...new Set(graph.edges.map((e) => e.type))];
-  }, [graph]);
-
-  // All unique functions for legend
-  const allFunctions = useMemo(() => {
-    if (!graph) return [];
-    return [...new Set(graph.nodes.map((n) => n.function))].filter(
-      (f) => f !== "elevator_core" && f !== "stairwell" && f !== "service_shaft"
-    );
+    return Array.from(new Set(graph.relations.map((relation) => relation.family)));
   }, [graph]);
 
   if (!graph) return null;
 
-  const g = graph.global;
-  const selectedNode = graph.nodes.find((n) => n.id === selectedNodeId) ?? null;
+  const triggerJsonDownload = (data: unknown, filename: string) => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const withDisplayColorsInGraph = (currentGraph: SpatialMassGraph) => ({
+    ...currentGraph,
+    nodes: currentGraph.nodes.map((node) => ({
+      ...node,
+      properties: {
+        ...node.properties,
+        display_color: massColor(node.id),
+      },
+    })),
+  });
+
+  const withDisplayColorsInForumResult = (result: any) => ({
+    ...result,
+    rounds: Array.isArray(result?.rounds)
+      ? result.rounds.map((round: any) => ({
+          ...round,
+          responses: Array.isArray(round?.responses)
+            ? round.responses.map((response: any) => ({
+                ...response,
+                proposal: {
+                  ...response.proposal,
+                  mass_entities: Array.isArray(response?.proposal?.mass_entities)
+                    ? response.proposal.mass_entities.map((node: any) => ({
+                        ...node,
+                        properties: {
+                          ...(node.properties ?? {}),
+                          display_color: massColor(node.id),
+                        },
+                      }))
+                    : response?.proposal?.mass_entities,
+                },
+              }))
+            : round?.responses,
+        }))
+      : result?.rounds,
+  });
+
+  const handleDownloadGraph = () => {
+    const createdAt = graph.metadata.created_at
+      .replace(/[:.]/g, "-")
+      .replace("T", "_")
+      .replace("Z", "");
+    triggerJsonDownload(
+      withDisplayColorsInGraph(graph),
+      `spatial_mass_graph_${createdAt}.json`
+    );
+  };
+
+  const handleDownloadForumResult = async () => {
+    if (!forumState.sessionId) return;
+
+    try {
+      const response = await fetch(`/api/forum/${forumState.sessionId}/result`);
+      const data = await response.json();
+      if (!response.ok || !data?.session) return;
+
+      const createdAt = graph.metadata.created_at
+        .replace(/[:.]/g, "-")
+        .replace("T", "_")
+        .replace("Z", "");
+      triggerJsonDownload(
+        withDisplayColorsInForumResult(data.session),
+        `forum_result_${createdAt}.json`
+      );
+    } catch {
+      return;
+    }
+  };
 
   return (
     <div style={containerStyle}>
-      {/* Header — site info */}
       <div style={headerStyle}>
-        <h2 style={{ fontSize: 14, color: "#fff", margin: 0, marginBottom: 4 }}>
-          {g.site.location}
-        </h2>
-        <div style={statsStyle}>
-          <span>
-            {g.site.dimensions[0]}m × {g.site.dimensions[1]}m
-          </span>
-          <span style={statSep}>|</span>
-          <span>FAR {g.site.far}%</span>
-          <span style={statSep}>|</span>
-          <span>
-            B{g.basement_floors} ~ {g.total_floors}F
-          </span>
-          <span style={statSep}>|</span>
-          <span>GFA {g.program.total_gfa.toLocaleString()}m²</span>
+        <h2 style={{ fontSize: 14, color: "#fff", margin: 0 }}>{graph.project.site.location}</h2>
+        <div style={metaStyle}>
+          <span>{graph.nodes.length} masses</span>
+          <span style={sepStyle}>|</span>
+          <span>{graph.relations.length} relations</span>
+          <span style={sepStyle}>|</span>
+          <span>{graph.resolved_model.variant_label}</span>
+          <span style={sepStyle}>|</span>
+          <span>updated {formatTimestamp(graph.metadata.created_at)}</span>
         </div>
-        <div style={statsStyle}>
-          <span>{graph.nodes.length} nodes</span>
-          <span style={statSep}>|</span>
-          <span>{graph.edges.length} edges</span>
+        <div style={{ color: "#7b8aa3", fontSize: 11, lineHeight: 1.5 }}>
+          {graph.narrative.massing_strategy_summary}
+        </div>
+        <div style={downloadRowStyle}>
+          <button type="button" onClick={handleDownloadGraph} style={downloadButtonStyle}>
+            Download SpatialMassGraph
+          </button>
+          <button
+            type="button"
+            onClick={handleDownloadForumResult}
+            style={downloadButtonStyle}
+            disabled={!forumState.sessionId}
+          >
+            Download forum_result
+          </button>
         </div>
       </div>
 
-      {/* Edge filter */}
-      <div style={edgeFilterStyle}>
-        {edgeTypes.map((type) => {
-          const active = activeEdgeTypes.has(type);
+      <div style={filterBarStyle}>
+        {relationFamilies.map((family) => {
+          const active = activeRelationFamilies.has(family);
           return (
             <button
-              key={type}
-              onClick={() =>
-                dispatch({ type: "TOGGLE_EDGE_TYPE", edgeType: type })
-              }
+              key={family}
+              onClick={() => dispatch({ type: "TOGGLE_RELATION_FAMILY", family })}
               style={{
-                ...edgeBtnStyle,
-                background: active ? "#2a2a4e" : "#111118",
-                color: active ? EDGE_COLORS[type] || "#aaf" : "#555",
-                borderColor: active ? EDGE_COLORS[type] || "#55a" : "#222",
+                ...filterButtonStyle,
+                color: active ? RELATION_COLORS[family] || "#fff" : "#596273",
+                borderColor: active ? RELATION_COLORS[family] || "#39424e" : "#252a33",
               }}
             >
-              {type.replace(/_/g, " ")}
+              {family}
             </button>
           );
         })}
       </div>
 
-      {/* Scrollable floor view */}
-      <div style={scrollAreaStyle}>
-        {zoneGroups.map((zg) => (
-          <div key={zg.zone}>
-            {/* Zone header */}
-            <div style={zoneHeaderStyle}>
-              <div
-                style={{
-                  ...zoneBarStyle,
-                  background: ZONE_COLORS[zg.zone] || "#333",
-                }}
-              />
+      <div style={scrollStyle}>
+        {hierarchyGroups.map((group) => (
+          <div key={group.hierarchy} style={groupStyle}>
+            <div style={groupHeaderStyle}>
               <span
                 style={{
-                  color: ZONE_COLORS[zg.zone] || "#666",
+                  color: HIERARCHY_COLORS[group.hierarchy] || "#fff",
                   fontSize: 10,
-                  fontWeight: 600,
                   letterSpacing: 1,
                   textTransform: "uppercase",
                 }}
               >
-                {zg.zone.replace(/_/g, " ")}
+                {group.hierarchy}
               </span>
-              <span style={{ color: "#444", fontSize: 9 }}>
-                {zg.floors.length}F
-              </span>
-              <div
-                style={{
-                  ...zoneBarStyle,
-                  flex: 1,
-                  background: ZONE_COLORS[zg.zone] || "#333",
-                }}
-              />
+              <span style={{ color: "#4c5564", fontSize: 10 }}>{group.nodes.length}</span>
             </div>
-
-            {/* Floor rows */}
-            {zg.floors.map(({ floor, zone, nodes }) => {
-              const isSelectedFloor = selectedFloor === floor;
-              const hasSelectedNode = nodes.some(
-                (n) => n.id === selectedNodeId
-              );
-
-              return (
-                <div
-                  key={floor}
-                  style={{
-                    ...floorRowStyle,
-                    background: hasSelectedNode
-                      ? "rgba(100,140,255,0.12)"
-                      : isSelectedFloor
-                        ? "rgba(100,140,255,0.06)"
-                        : undefined,
-                  }}
-                  onClick={() =>
-                    dispatch({ type: "SELECT_FLOOR", floor })
-                  }
-                >
-                  {/* Floor label */}
-                  <div style={floorLabelStyle}>
-                    {floorLabel(floor)}
-                  </div>
-
-                  {/* Nodes as dots */}
-                  <div style={dotsRowStyle}>
-                    {nodes.map((node) => {
-                      const isSelected = node.id === selectedNodeId;
-                      const isConnected = connectedIds.has(node.id);
-                      const isCore =
-                        node.function === "elevator_core" ||
-                        node.function === "stairwell" ||
-                        node.function === "service_shaft";
-                      const color =
-                        FUNC_COLORS[node.function] ||
-                        ZONE_COLORS[zone] ||
-                        "#555";
-
-                      const dotSize = isCore ? 6 : 10;
-                      const displaySize = isSelected
-                        ? dotSize + 4
-                        : dotSize;
-
-                      return (
-                        <div
-                          key={node.id}
-                          title={`${node.function.replace(/_/g, " ")} — ${node.position}`}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            dispatch({
-                              type: "SELECT_NODE",
-                              nodeId: node.id,
-                            });
-                          }}
+            <div style={cardGridStyle}>
+              {group.nodes.map((node) => {
+                const selected = node.id === selectedNodeId;
+                const connected = connectedIds.has(node.id);
+                const muted = selectedNodeId && !selected && !connected;
+                return (
+                  <button
+                    key={node.id}
+                    onClick={() => dispatch({ type: "SELECT_NODE", nodeId: node.id })}
+                    style={{
+                      ...cardStyle,
+                      opacity: muted ? 0.35 : 1,
+                      borderColor: selected ? "#dce7ff" : "#242936",
+                      boxShadow: selected ? "0 0 0 1px rgba(220,231,255,0.35)" : undefined,
+                    }}
+                  >
+                    <div style={cardTopStyle}>
+                        <span
                           style={{
-                            width: displaySize,
-                            height: displaySize,
-                            borderRadius: "50%",
-                            background: color,
-                            opacity:
-                              selectedNodeId && !isSelected && !isConnected
-                                ? 0.25
-                                : 1,
-                            boxShadow: isSelected
-                              ? `0 0 0 2px #fff, 0 0 8px ${color}`
-                              : isConnected
-                                ? `0 0 0 1px rgba(255,255,255,0.4)`
-                                : undefined,
-                            cursor: "pointer",
-                            transition: "all 0.12s",
-                            flexShrink: 0,
+                            ...kindDotStyle,
+                            background: massColor(node.id),
                           }}
                         />
-                      );
-                    })}
-                  </div>
-
-                  {/* Style ref indicator */}
-                  {nodes.some((n) => n.style_ref) && (
-                    <div style={styleRefStyle}>
-                      {nodes.find((n) => n.style_ref)?.style_ref}
+                      <span style={{ color: "#d7e0ee", fontSize: 11 }}>{node.name}</span>
                     </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        ))}
-      </div>
-
-      {/* Selected node info bar */}
-      {selectedNode && (
-        <div style={selectedInfoStyle}>
-          <div
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: "50%",
-              background:
-                FUNC_COLORS[selectedNode.function] || "#555",
-              flexShrink: 0,
-            }}
-          />
-          <span style={{ color: "#ccc", fontWeight: 500 }}>
-            {selectedNode.function.replace(/_/g, " ")}
-          </span>
-          <span style={{ color: "#555" }}>
-            {floorLabel(selectedNode.floor_level)}
-          </span>
-          <span style={{ color: "#444" }}>
-            {selectedNode.position}
-          </span>
-          <span style={{ color: "#333" }}>
-            {selectedNode.id}
-          </span>
-        </div>
-      )}
-
-      {/* Legend */}
-      <div style={legendStyle}>
-        {allFunctions.map((func) => (
-          <div key={func} style={legendItemStyle}>
-            <div
-              style={{
-                width: 7,
-                height: 7,
-                borderRadius: "50%",
-                background: FUNC_COLORS[func] || "#555",
-                flexShrink: 0,
-              }}
-            />
-            <span>{func.replace(/_/g, " ")}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ============================================================
-// V2: Mass List View
-// ============================================================
-
-import type { SpatialMassGraph } from "@gim/core";
-import type { GraphAction } from "@/lib/graph-context";
-
-function MassListView({
-  massGraph,
-  selectedNodeId,
-  dispatch,
-}: {
-  massGraph: SpatialMassGraph;
-  selectedNodeId: string | null;
-  dispatch: React.Dispatch<GraphAction>;
-}) {
-  const g = massGraph.global;
-  const nodes = massGraph.nodes;
-  const relations = massGraph.relations;
-
-  // Sort nodes by floor_range (top to bottom)
-  const sortedNodes = useMemo(
-    () => [...nodes].sort((a, b) => b.floor_range[1] - a.floor_range[1] || b.floor_range[0] - a.floor_range[0]),
-    [nodes],
-  );
-
-  const selectedNode = nodes.find((n) => n.id === selectedNodeId) ?? null;
-
-  // Connected node IDs
-  const connectedIds = useMemo(() => {
-    if (!selectedNodeId) return new Set<string>();
-    const ids = new Set<string>();
-    for (const r of relations) {
-      if (r.source === selectedNodeId) ids.add(r.target);
-      if (r.target === selectedNodeId) ids.add(r.source);
-    }
-    return ids;
-  }, [selectedNodeId, relations]);
-
-  // Relations grouped by family
-  const families = useMemo(
-    () => [...new Set(relations.map((r) => r.family))],
-    [relations],
-  );
-
-  return (
-    <div style={containerStyle}>
-      {/* Header */}
-      <div style={headerStyle}>
-        <h2 style={{ fontSize: 14, color: "#fff", margin: 0, marginBottom: 4 }}>
-          {g.site.location}
-        </h2>
-        <div style={statsStyle}>
-          <span>{g.site.dimensions[0]}m × {g.site.dimensions[1]}m</span>
-          <span style={statSep}>|</span>
-          <span>FAR {g.site.far}%</span>
-          <span style={statSep}>|</span>
-          <span>B{g.basement_floors} ~ {g.total_floors}F</span>
-        </div>
-        <div style={statsStyle}>
-          <span style={{ color: "#4488cc" }}>{nodes.length} masses</span>
-          <span style={statSep}>|</span>
-          <span>{relations.length} relations</span>
-          <span style={statSep}>|</span>
-          <span style={{ color: "#666", fontSize: 9 }}>v2</span>
-        </div>
-      </div>
-
-      {/* Relation family filter */}
-      <div style={edgeFilterStyle}>
-        {families.map((fam) => (
-          <button
-            key={fam}
-            onClick={() => dispatch({ type: "TOGGLE_EDGE_TYPE", edgeType: fam })}
-            style={{
-              ...edgeBtnStyle,
-              background: "#2a2a4e",
-              color: MASS_RELATION_COLORS[fam] || "#aaf",
-              borderColor: MASS_RELATION_COLORS[fam] || "#55a",
-            }}
-          >
-            {fam}
-          </button>
-        ))}
-      </div>
-
-      {/* Mass node list */}
-      <div style={scrollAreaStyle}>
-        {sortedNodes.map((node) => {
-          const isSelected = node.id === selectedNodeId;
-          const isConnected = connectedIds.has(node.id);
-          const color = MASS_TYPE_COLORS[node.type] || "#555";
-
-          return (
-            <div
-              key={node.id}
-              onClick={() => dispatch({ type: "SELECT_NODE", nodeId: node.id })}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "8px 16px",
-                cursor: "pointer",
-                background: isSelected
-                  ? "rgba(100,140,255,0.12)"
-                  : isConnected
-                    ? "rgba(100,140,255,0.04)"
-                    : undefined,
-                borderLeft: isSelected ? `3px solid ${color}` : "3px solid transparent",
-                opacity: selectedNodeId && !isSelected && !isConnected ? 0.4 : 1,
-                transition: "all 0.12s",
-              }}
-            >
-              {/* Type indicator */}
-              <div
-                style={{
-                  width: 10,
-                  height: 10,
-                  borderRadius: node.type === "void" ? 0 : "50%",
-                  background: node.type === "void" ? "transparent" : color,
-                  border: node.type === "void" ? `2px dashed ${color}` : "none",
-                  flexShrink: 0,
-                }}
-              />
-              {/* Info */}
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 11, color: "#ddd", fontWeight: isSelected ? 600 : 400 }}>
-                  {node.label}
-                </div>
-                <div style={{ fontSize: 9, color: "#666", marginTop: 2 }}>
-                  <span style={{ color: ZONE_COLORS[node.floor_zone] || "#555" }}>
-                    {floorLabel(node.floor_range[0])}~{floorLabel(node.floor_range[1])}
-                  </span>
-                  <span style={{ margin: "0 4px", color: "#333" }}>·</span>
-                  <span>{node.geometry.primitive}</span>
-                  <span style={{ margin: "0 4px", color: "#333" }}>·</span>
-                  <span>{node.geometry.scale.category}</span>
-                </div>
-                {node.programs.length > 0 && (
-                  <div style={{ fontSize: 8, color: "#555", marginTop: 2 }}>
-                    {node.programs.slice(0, 4).join(", ")}
-                    {node.programs.length > 4 ? ` +${node.programs.length - 4}` : ""}
-                  </div>
-                )}
-              </div>
-              {/* Type badge */}
-              <div style={{ fontSize: 8, color, textTransform: "uppercase", flexShrink: 0 }}>
-                {node.type}
-              </div>
+                    <div style={{ color: "#7b8aa3", fontSize: 10 }}>{node.spatial_role}</div>
+                    <div style={chipRowStyle}>
+                      <span style={{ ...chipStyle, color: KIND_COLORS[node.kind] || "#7b8aa3" }}>
+                        {node.kind}
+                      </span>
+                      <span style={chipStyle}>{node.geometry.primitive}</span>
+                      <span style={chipStyle}>{node.geometry.vertical_placement}</span>
+                    </div>
+                    <div style={{ color: "#9fb0c6", fontSize: 10, lineHeight: 1.5 }}>
+                      {node.narrative.intent}
+                    </div>
+                  </button>
+                );
+              })}
             </div>
-          );
-        })}
+          </div>
+        ))}
       </div>
-
-      {/* Selected node detail */}
-      {selectedNode && (
-        <div style={{ ...selectedInfoStyle, flexDirection: "column", alignItems: "flex-start", gap: 4 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <div style={{
-              width: 8, height: 8, borderRadius: "50%",
-              background: MASS_TYPE_COLORS[selectedNode.type] || "#555",
-            }} />
-            <span style={{ color: "#ccc", fontWeight: 500, fontSize: 11 }}>
-              {selectedNode.label}
-            </span>
-          </div>
-          <div style={{ fontSize: 9, color: "#666" }}>
-            {selectedNode.narrative.architectural_description.slice(0, 100)}
-            {selectedNode.narrative.architectural_description.length > 100 ? "…" : ""}
-          </div>
-          <div style={{ fontSize: 8, color: "#555" }}>
-            {selectedNode.geometry.scale.hint.width.toFixed(0)}m × {selectedNode.geometry.scale.hint.depth.toFixed(0)}m × {selectedNode.geometry.scale.hint.height.toFixed(0)}m
-          </div>
-        </div>
-      )}
     </div>
   );
 }
-
-// ============================================================
-// Styles
-// ============================================================
 
 const containerStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
   height: "100%",
-  overflow: "hidden",
+  background: "#0d0d15",
 };
 
 const headerStyle: React.CSSProperties = {
-  padding: "12px 16px",
+  padding: "14px 16px 12px",
   borderBottom: "1px solid #1a1a2e",
+  display: "flex",
+  flexDirection: "column",
+  gap: 6,
 };
 
-const statsStyle: React.CSSProperties = {
-  color: "#666",
+const metaStyle: React.CSSProperties = {
+  display: "flex",
+  gap: 8,
+  color: "#58616e",
   fontSize: 10,
-  lineHeight: 1.8,
+};
+
+const downloadRowStyle: React.CSSProperties = {
   display: "flex",
+  gap: 8,
   flexWrap: "wrap",
-  gap: 0,
+  marginTop: 4,
 };
 
-const statSep: React.CSSProperties = {
-  color: "#333",
-  margin: "0 6px",
-};
-
-const edgeFilterStyle: React.CSSProperties = {
-  padding: "6px 16px",
-  display: "flex",
-  flexWrap: "wrap",
-  gap: 3,
-  borderBottom: "1px solid #1a1a2e",
-};
-
-const edgeBtnStyle: React.CSSProperties = {
-  border: "1px solid #222",
-  fontSize: 8,
-  padding: "2px 6px",
-  borderRadius: 3,
-  cursor: "pointer",
+const downloadButtonStyle: React.CSSProperties = {
+  border: "1px solid #2b3d59",
+  background: "#111520",
+  color: "#dce7ff",
+  borderRadius: 8,
+  padding: "7px 10px",
+  fontSize: 10,
   fontFamily: "inherit",
-  transition: "all 0.15s",
-};
-
-const scrollAreaStyle: React.CSSProperties = {
-  flex: 1,
-  overflowY: "auto",
-  padding: "0 0 8px 0",
-};
-
-const zoneHeaderStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 8,
-  padding: "8px 16px 4px",
-  position: "sticky",
-  top: 0,
-  background: "#0d0d15",
-  zIndex: 1,
-};
-
-const zoneBarStyle: React.CSSProperties = {
-  height: 1,
-  width: 20,
-  opacity: 0.4,
-};
-
-const floorRowStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  padding: "4px 16px",
   cursor: "pointer",
-  transition: "background 0.1s",
-  minHeight: 24,
 };
 
-const floorLabelStyle: React.CSSProperties = {
-  width: 32,
-  textAlign: "right",
-  fontSize: 9,
-  color: "#555",
-  paddingRight: 10,
-  flexShrink: 0,
-  fontVariantNumeric: "tabular-nums",
-};
+const sepStyle: React.CSSProperties = { color: "#313744" };
 
-const dotsRowStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 4,
-  flex: 1,
-  flexWrap: "wrap",
-  rowGap: 3,
-};
-
-const styleRefStyle: React.CSSProperties = {
-  fontSize: 8,
-  color: "#666",
-  marginLeft: 8,
-  flexShrink: 0,
-};
-
-const selectedInfoStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 8,
-  padding: "6px 16px",
-  borderTop: "1px solid #1a1a2e",
-  fontSize: 10,
-  background: "rgba(100,140,255,0.04)",
-};
-
-const legendStyle: React.CSSProperties = {
-  padding: "8px 16px",
-  borderTop: "1px solid #1a1a2e",
-  fontSize: 8,
+const filterBarStyle: React.CSSProperties = {
+  padding: "10px 16px",
+  borderBottom: "1px solid #1a1a2e",
   display: "flex",
   flexWrap: "wrap",
   gap: 6,
-  maxHeight: 56,
-  overflowY: "auto",
-  color: "#666",
 };
 
-const legendItemStyle: React.CSSProperties = {
+const filterButtonStyle: React.CSSProperties = {
+  border: "1px solid #252a33",
+  background: "transparent",
+  borderRadius: 999,
+  padding: "4px 8px",
+  fontSize: 10,
+  cursor: "pointer",
+  fontFamily: "inherit",
+};
+
+const scrollStyle: React.CSSProperties = {
+  flex: 1,
+  overflowY: "auto",
+  padding: "14px 16px 18px",
+};
+
+const groupStyle: React.CSSProperties = {
+  marginBottom: 18,
+};
+
+const groupHeaderStyle: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  marginBottom: 8,
+};
+
+const cardGridStyle: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "1fr",
+  gap: 8,
+};
+
+const cardStyle: React.CSSProperties = {
+  background: "#111520",
+  border: "1px solid #242936",
+  borderRadius: 10,
+  padding: 12,
+  textAlign: "left",
+  display: "flex",
+  flexDirection: "column",
+  gap: 6,
+  cursor: "pointer",
+  fontFamily: "inherit",
+};
+
+const cardTopStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
-  gap: 3,
+  gap: 8,
+};
+
+const kindDotStyle: React.CSSProperties = {
+  width: 10,
+  height: 10,
+  borderRadius: "50%",
+  flexShrink: 0,
+};
+
+const chipRowStyle: React.CSSProperties = {
+  display: "flex",
+  flexWrap: "wrap",
+  gap: 6,
+};
+
+const chipStyle: React.CSSProperties = {
+  color: "#6d7787",
+  fontSize: 9,
+  padding: "2px 6px",
+  borderRadius: 999,
+  background: "#171c28",
 };
