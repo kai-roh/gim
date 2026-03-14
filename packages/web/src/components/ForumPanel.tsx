@@ -305,7 +305,7 @@ export function ForumPanel() {
       )}
 
       {/* Architect Selection (before session) */}
-      {!state.sessionId && !state.autoRunning && !showHistory && (
+      {!state.sessionId && !state.autoRunning && !showHistory && !state.historicalForumResult && (
         <div style={sectionStyle}>
           <div style={sectionTitleStyle}>Select Architects (2-5)</div>
           <div style={architectGridStyle}>
