@@ -35,8 +35,24 @@ function getFuncCategory(fn: string): string {
 }
 
 // ============================================================
-// Component
+// Types
 // ============================================================
+
+interface FloorBuildData {
+  floor: number;
+  y: number;
+  h: number;
+  zone: string;
+  outline: [number, number][];
+  floorDNA: ArchitectFormDNA;
+  nodes: FloorNode[];
+  baseW: number;
+  baseD: number;
+  coreR: number;
+  hasTerrace: boolean;
+  aboveIdx: number;
+  totalAbove: number;
+}
 
 interface SceneState {
   scene: THREE.Scene;
@@ -47,13 +63,20 @@ interface SceneState {
   floorSlabs: Map<number, THREE.Group>;
   selectables: THREE.Object3D[];
   animId: number;
+  massGroup: THREE.Group;
+  detailGroup: THREE.Group;
+  floorData: FloorBuildData[];
 }
+
+// ============================================================
+// Component
+// ============================================================
 
 export function MassViewer3D() {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<SceneState | null>(null);
   const { state, dispatch } = useGraph();
-  const { graph, selectedNodeId } = state;
+  const { graph, selectedNodeId, selectedFloor } = state;
 
   const initScene = useCallback(() => {
     if (!containerRef.current || !graph) return;
@@ -96,9 +119,7 @@ export function MassViewer3D() {
     controls.update();
 
     // ---- Lighting ----
-    // Ambient: bright enough to read surfaces on all sides
     scene.add(new THREE.HemisphereLight(0x7090c0, 0x1a1820, 0.7));
-    // Key (sun): warm, strong, casts crisp shadows
     const key = new THREE.DirectionalLight(0xfff0dd, 1.8);
     key.position.set(30, bldgH * 1.5, 40);
     key.castShadow = true;
@@ -109,15 +130,12 @@ export function MassViewer3D() {
     key.shadow.bias = -0.0005;
     key.shadow.normalBias = 0.02;
     scene.add(key);
-    // Fill: cool blue from opposite side
     const fill = new THREE.DirectionalLight(0x80a8d0, 0.6);
     fill.position.set(-40, bldgH * 0.6, -25);
     scene.add(fill);
-    // Rim: backlight for silhouette separation
     const rim = new THREE.DirectionalLight(0x90a0cc, 0.45);
     rim.position.set(-15, bldgH * 0.4, -50);
     scene.add(rim);
-    // Ground bounce: subtle warm uplight
     const bounce = new THREE.PointLight(0xddccaa, 0.3, bldgH * 2);
     bounce.position.set(0, -2, 0);
     scene.add(bounce);
@@ -129,6 +147,9 @@ export function MassViewer3D() {
       floorSlabs: new Map(),
       selectables: [],
       animId: 0,
+      massGroup: new THREE.Group(),
+      detailGroup: new THREE.Group(),
+      floorData: [],
     };
     sceneRef.current = ref;
 
@@ -179,10 +200,90 @@ export function MassViewer3D() {
 
   useEffect(() => { return initScene(); }, [initScene]);
 
-  // ---- Selection ----
+  // ---- Selected Floor Mode Effect ----
   useEffect(() => {
     const ref = sceneRef.current;
     if (!ref || !graph) return;
+
+    // Clear previous detail group
+    while (ref.detailGroup.children.length > 0) {
+      const child = ref.detailGroup.children[0];
+      ref.detailGroup.remove(child);
+    }
+    // Clear selectables and nodeMeshes from detail mode
+    ref.selectables.length = 0;
+    ref.nodeMeshes.clear();
+
+    if (selectedFloor === null || selectedFloor === undefined) {
+      // ---- Mass Mode: fully opaque mass ----
+      ref.massGroup.traverse((obj) => {
+        if ((obj as THREE.Mesh).isMesh || (obj as THREE.LineSegments).isLineSegments) {
+          const mat = (obj as THREE.Mesh).material;
+          if (mat && !Array.isArray(mat)) {
+            const m = mat as THREE.MeshPhysicalMaterial;
+            if (m.opacity !== undefined) {
+              // Restore full opacity — but respect original material settings
+              // Mass materials are tagged with userData.massOriginalOpacity
+              if (obj.userData?.massOriginalOpacity !== undefined) {
+                m.opacity = obj.userData.massOriginalOpacity;
+                m.transparent = m.opacity < 1.0;
+              }
+            }
+          }
+        }
+      });
+      // Remove detail group from scene
+      if (ref.detailGroup.parent) {
+        ref.scene.remove(ref.detailGroup);
+      }
+    } else {
+      // ---- Section Mode: semi-transparent mass + floor details ----
+      // Make mass group semi-transparent
+      ref.massGroup.traverse((obj) => {
+        if ((obj as THREE.Mesh).isMesh || (obj as THREE.LineSegments).isLineSegments) {
+          const mat = (obj as THREE.Mesh).material;
+          if (mat && !Array.isArray(mat)) {
+            const m = mat as THREE.MeshPhysicalMaterial;
+            if (m.opacity !== undefined) {
+              // Store original opacity on first transition
+              if (obj.userData.massOriginalOpacity === undefined) {
+                obj.userData.massOriginalOpacity = m.opacity;
+              }
+              m.opacity = 0.15;
+              m.transparent = true;
+            }
+          }
+        }
+      });
+
+      // Build detail for selected floor + adjacent floors
+      const floorNumbers = ref.floorData.map((fd) => fd.floor).sort((a, b) => a - b);
+      const selIdx = floorNumbers.indexOf(selectedFloor);
+
+      for (let offset = -1; offset <= 1; offset++) {
+        const idx = selIdx + offset;
+        if (idx < 0 || idx >= floorNumbers.length) continue;
+        const floorNum = floorNumbers[idx];
+        const fd = ref.floorData.find((d) => d.floor === floorNum);
+        if (!fd) continue;
+
+        const isSelected = offset === 0;
+        const group = buildFloorDetail(ref, fd, isSelected);
+        ref.detailGroup.add(group);
+      }
+
+      // Add detail group to scene
+      if (!ref.detailGroup.parent) {
+        ref.scene.add(ref.detailGroup);
+      }
+    }
+  }, [selectedFloor, graph]);
+
+  // ---- Node Selection (only active in section mode) ----
+  useEffect(() => {
+    const ref = sceneRef.current;
+    if (!ref || !graph) return;
+    if (selectedFloor === null || selectedFloor === undefined) return;
 
     // Reset all dots to default
     ref.nodeMeshes.forEach((mesh) => {
@@ -190,14 +291,6 @@ export function MassViewer3D() {
       mat.emissiveIntensity = selectedNodeId ? 0.08 : 0.25;
       mat.opacity = selectedNodeId ? 0.25 : 0.7;
       mesh.scale.set(1, 1, 1);
-    });
-    ref.floorSlabs.forEach((group) => {
-      group.children.forEach((child) => {
-        if ((child as any).userData?.isFacade) {
-          const mat = (child as THREE.Mesh).material as THREE.MeshPhysicalMaterial;
-          mat.emissiveIntensity = selectedNodeId ? 0.01 : 0.025;
-        }
-      });
     });
 
     if (selectedNodeId) {
@@ -226,23 +319,76 @@ export function MassViewer3D() {
           m.scale.set(1.4, 1.4, 1.4);
         }
       });
-
-      // Highlight floor slab facade
-      const node = graph.nodes.find((n) => n.id === selectedNodeId);
-      if (node) {
-        const group = ref.floorSlabs.get(node.floor_level);
-        group?.children.forEach((child) => {
-          if ((child as any).userData?.isFacade) {
-            const mat = (child as THREE.Mesh).material as THREE.MeshPhysicalMaterial;
-            mat.emissiveIntensity = 0.06;
-          }
-        });
-      }
     }
-  }, [selectedNodeId, graph]);
+  }, [selectedNodeId, selectedFloor, graph]);
+
+  // Build floor labels for the selector
+  const floorLabels = React.useMemo(() => {
+    if (!graph) return [];
+    const byFloor = new Map<number, FloorNode[]>();
+    for (const n of graph.nodes) {
+      if (!byFloor.has(n.floor_level)) byFloor.set(n.floor_level, []);
+      byFloor.get(n.floor_level)!.push(n);
+    }
+    return Array.from(byFloor.keys()).sort((a, b) => a - b);
+  }, [graph]);
 
   return (
     <div ref={containerRef} style={{ width: "100%", height: "100%", position: "relative" }}>
+      {/* Floor Selector Strip */}
+      {graph && floorLabels.length > 0 && (
+        <div style={floorSelectorStyle}>
+          {floorLabels.slice().reverse().map((floor) => {
+            const label = floor < 0 ? `B${Math.abs(floor)}` : `${floor}F`;
+            const isSelected = selectedFloor === floor;
+            return (
+              <div
+                key={floor}
+                onClick={() => {
+                  if (isSelected) {
+                    dispatch({ type: "SELECT_FLOOR", floor: null });
+                  } else {
+                    dispatch({ type: "SELECT_FLOOR", floor });
+                  }
+                }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                  cursor: "pointer",
+                  padding: "2px 4px",
+                  borderRadius: 2,
+                  background: isSelected ? "rgba(100,140,255,0.25)" : "transparent",
+                  transition: "background 0.15s",
+                }}
+              >
+                <div
+                  style={{
+                    width: 18,
+                    height: 4,
+                    borderRadius: 1,
+                    background: isSelected
+                      ? "#6a8cff"
+                      : "rgba(100,120,160,0.35)",
+                    transition: "background 0.15s",
+                  }}
+                />
+                <span
+                  style={{
+                    fontSize: 8,
+                    fontFamily: "'SF Mono', monospace",
+                    color: isSelected ? "#8aacff" : "#556",
+                    lineHeight: 1,
+                    userSelect: "none",
+                  }}
+                >
+                  {label}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
       {graph && (
         <div style={legendStyle}>
           <div style={{ fontSize: 9, color: "#777", marginBottom: 3 }}>
@@ -251,11 +397,37 @@ export function MassViewer3D() {
           <div style={{ fontSize: 8, color: "#555" }}>
             {graph.nodes.length} nodes | {graph.edges.length} edges
           </div>
+          <div style={{ fontSize: 8, color: "#556", marginTop: 2 }}>
+            {selectedFloor !== null && selectedFloor !== undefined
+              ? `Floor ${selectedFloor < 0 ? `B${Math.abs(selectedFloor)}` : `${selectedFloor}F`} selected`
+              : "Mass view"}
+          </div>
         </div>
       )}
     </div>
   );
 }
+
+// ============================================================
+// Floor Selector Style
+// ============================================================
+
+const floorSelectorStyle: React.CSSProperties = {
+  position: "absolute",
+  left: 8,
+  top: "50%",
+  transform: "translateY(-50%)",
+  display: "flex",
+  flexDirection: "column",
+  gap: 1,
+  background: "rgba(20,22,30,0.85)",
+  border: "1px solid #2a3040",
+  borderRadius: 4,
+  padding: "6px 4px",
+  zIndex: 10,
+  maxHeight: "70%",
+  overflowY: "auto",
+};
 
 // ============================================================
 // Environment
@@ -264,7 +436,7 @@ export function MassViewer3D() {
 function buildEnvironment(scene: THREE.Scene, graph: VerticalNodeGraph) {
   const [siteW, siteD] = graph.global.site.dimensions;
 
-  // Ground — lighter surface so building shadow reads clearly
+  // Ground
   const ground = new THREE.Mesh(
     new THREE.PlaneGeometry(200, 200),
     new THREE.MeshStandardMaterial({ color: 0x252830, roughness: 0.92, metalness: 0.02 }),
@@ -316,11 +488,11 @@ function buildEnvironment(scene: THREE.Scene, graph: VerticalNodeGraph) {
 }
 
 // ============================================================
-// Building
+// Building — Compute + Mass View
 // ============================================================
 
 function buildBuilding(ref: SceneState, graph: VerticalNodeGraph) {
-  const { scene, nodeMeshes, floorSlabs, selectables } = ref;
+  const { scene } = ref;
   const [siteW, siteD] = graph.global.site.dimensions;
   const bcr = graph.global.site.bcr / 100;
 
@@ -360,24 +532,11 @@ function buildBuilding(ref: SceneState, graph: VerticalNodeGraph) {
     }
   }
 
-  // Sections for continuous exterior shell (collected per floor)
-  const shellSections: { y: number; outline: [number, number][] }[] = [];
-
-  // ---- Core (thin translucent spine) ----
   const coreR = Math.min(baseW, baseD) * 0.04;
-  const minY = floorY.get(floors[0]) || 0;
-  const totalH = cumY - minY;
-  const coreGeo = new THREE.CylinderGeometry(coreR, coreR, totalH, 12);
-  const coreMat = new THREE.MeshPhysicalMaterial({
-    color: 0x404860, transparent: true, opacity: 0.2,
-    roughness: 0.2, metalness: 0.6,
-    emissive: 0x2a2a48, emissiveIntensity: 0.06,
-  });
-  const core = new THREE.Mesh(coreGeo, coreMat);
-  core.position.set(0, minY + totalH / 2, 0);
-  scene.add(core);
 
-  // ---- Per-floor construction ----
+  // ---- Compute phase: build FloorBuildData[] ----
+  const floorDataArr: FloorBuildData[] = [];
+
   for (let fi = 0; fi < floors.length; fi++) {
     const floor = floors[fi];
     const nodes = nodesByFloor.get(floor)!;
@@ -385,187 +544,91 @@ function buildBuilding(ref: SceneState, graph: VerticalNodeGraph) {
     const y = floorY.get(floor)!;
     const h = floorH.get(floor)!;
 
-    // Per-floor style
     const floorStyle = nodes.find((n) => n.style_ref && n.style_ref !== "none")?.style_ref;
     const floorDNA = getFloorFormDNA(floorStyle, dominantDNA);
 
-    // Floor index (0-based for above-ground)
     const aboveIdx = floor < 0 ? 0 : aboveGroundFloors.indexOf(floor);
-    const floorRatio = totalAbove > 1 ? aboveIdx / (totalAbove - 1) : 0.5;
 
-    // Ground expansion
     const groundScale = floor <= 1 ? floorDNA.groundExpansion : 1;
     const fW = baseW * groundScale;
     const fD = baseD * groundScale;
 
-    // Use precomputed geometry if available, otherwise generate on-the-fly
     const precomputed = nodes[0]?.geometry;
     const outline = precomputed?.outline ?? generateFloorOutline(floorDNA, fW, fD, aboveIdx, totalAbove);
 
-    // Terrace check
     const hasTerrace = floor > 0 && shouldHaveTerrace(floorDNA, aboveIdx, totalAbove);
 
-    const floorGroup = new THREE.Group();
-
-    // ---- Slab ----
-    const slabThick = 0.3;
-    const slabShape = outlineToShape(outline);
-    const slabGeo = new THREE.ExtrudeGeometry(slabShape, { depth: slabThick, bevelEnabled: false });
-    slabGeo.rotateX(-Math.PI / 2);
-
-    const slabColor = zone === "basement" ? 0x2a2c34 : floor === 0 ? 0x3a3e4a : 0x303440;
-    const slabMat = new THREE.MeshStandardMaterial({
-      color: slabColor, roughness: 0.6, metalness: 0.15,
-      emissive: 0x101418, emissiveIntensity: 0.03,
+    floorDataArr.push({
+      floor,
+      y,
+      h,
+      zone,
+      outline,
+      floorDNA,
+      nodes,
+      baseW: fW,
+      baseD: fD,
+      coreR,
+      hasTerrace,
+      aboveIdx,
+      totalAbove,
     });
-    const slab = new THREE.Mesh(slabGeo, slabMat);
-    slab.position.y = y;
-    slab.castShadow = true;
-    slab.receiveShadow = true;
-    floorGroup.add(slab);
-
-    // ---- Slab edge highlight (floor division lines) ----
-    const edgeGeo = new THREE.EdgesGeometry(slabGeo);
-    const edgeLine = new THREE.LineSegments(edgeGeo, new THREE.LineBasicMaterial({
-      color: 0x5a6078, transparent: true, opacity: 0.6,
-    }));
-    edgeLine.position.y = y;
-    floorGroup.add(edgeLine);
-
-    // ---- Collect outline for continuous exterior shell ----
-    if (floor >= 0) {
-      const wallOutline = hasTerrace
-        ? applyTerraceInset(outline, floorDNA.terraceDepth, aboveIdx)
-        : outline;
-      shellSections.push({ y, outline: wallOutline });
-
-      // ---- Mullion grid (horizontal band lines per floor) ----
-      const facadeH = h - slabThick;
-      const glassRatio = floorDNA.facadeOpacity;
-      const mullionColor = glassRatio > 0.35 ? 0x6a7090 : 0x505868;
-      addMullionGrid(floorGroup, wallOutline, y + slabThick, facadeH, mullionColor, 0.3);
-    }
-
-    // ---- Pilotis (ground floor columns if applicable) ----
-    if (floorDNA.pilotis && floor === 0) {
-      const colR = 0.3;
-      const colH = h;
-      const colPositions: [number, number][] = [
-        [-fW * 0.3, -fD * 0.3], [fW * 0.3, -fD * 0.3],
-        [-fW * 0.3, fD * 0.3], [fW * 0.3, fD * 0.3],
-        [0, -fD * 0.35], [0, fD * 0.35],
-      ];
-      for (const [cx, cz] of colPositions) {
-        const colGeo = new THREE.CylinderGeometry(colR, colR, colH, 8);
-        const colMat = new THREE.MeshStandardMaterial({ color: 0x2a2a38, roughness: 0.6, metalness: 0.2 });
-        const col = new THREE.Mesh(colGeo, colMat);
-        col.position.set(cx, y + colH / 2, cz);
-        col.castShadow = true;
-        floorGroup.add(col);
-      }
-    }
-
-    // ---- Diagrid structure ----
-    if (floorDNA.showDiagrid && floor >= 0 && fi < floors.length - 1) {
-      addDiagridSegment(floorGroup, outline, y + slabThick, h, floorDNA);
-    }
-
-    // ---- Exoskeleton structure ----
-    if (floorDNA.showExoskeleton && floor >= 0 && fi < floors.length - 1) {
-      addExoskeletonSegment(floorGroup, outline, y + slabThick, h);
-    }
-
-    // ---- Column expression ----
-    if (floorDNA.columnExpression && floor >= 0) {
-      addColumnExpression(floorGroup, outline, y, h);
-    }
-
-    // ---- Node dots (small glowing spheres) ----
-    const dotR = 0.35;
-    const dotGeo = new THREE.SphereGeometry(dotR, 8, 6);
-    const dotY = y + h * 0.5;
-
-    for (const node of nodes) {
-      const cat = getFuncCategory(node.function);
-      const color = FUNC_COLORS_HEX[node.function] || ZONE_COLORS_HEX[zone] || 0x555555;
-      const pos = computeDotPosition(node.position, fW, fD, coreR);
-
-      const dotMat = new THREE.MeshStandardMaterial({
-        color,
-        transparent: true,
-        opacity: cat === "core" ? 0.3 : 0.7,
-        roughness: 0.2,
-        metalness: 0.1,
-        emissive: color,
-        emissiveIntensity: 0.25,
-      });
-
-      const dot = new THREE.Mesh(dotGeo, dotMat);
-      dot.position.set(pos.x, dotY, pos.z);
-      dot.userData = { nodeId: node.id, node };
-      floorGroup.add(dot);
-      nodeMeshes.set(node.id, dot);
-      selectables.push(dot);
-    }
-
-    // ---- Floor label ----
-    const label = floor < 0 ? `B${Math.abs(floor)}` : `${floor}F`;
-    const sprite = makeLabel(label, 0x6a7890);
-    const labelX = fW / 2 + 3;
-    sprite.position.set(labelX, y + h / 2, 0);
-    sprite.scale.set(4, 2, 1);
-    floorGroup.add(sprite);
-
-    scene.add(floorGroup);
-    floorSlabs.set(floor, floorGroup);
   }
 
-  // ---- Continuous exterior shell (single opaque surface) ----
+  ref.floorData = floorDataArr;
+
+  // ---- Build Mass View ----
+  buildMassView(ref, graph, floorDataArr, dominantDNA, baseW, baseD, aboveGroundFloors, floorY, floorH, nodesByFloor);
+}
+
+// ============================================================
+// Mass View — Shell + Roof + Canopy only
+// ============================================================
+
+function buildMassView(
+  ref: SceneState,
+  graph: VerticalNodeGraph,
+  floorDataArr: FloorBuildData[],
+  dominantDNA: ArchitectFormDNA,
+  baseW: number,
+  baseD: number,
+  aboveGroundFloors: number[],
+  floorY: Map<number, number>,
+  floorH: Map<number, number>,
+  nodesByFloor: Map<number, FloorNode[]>,
+) {
+  const massGroup = ref.massGroup;
+  const totalAbove = aboveGroundFloors.length;
+
+  // Collect shell sections from above-ground floors
+  const shellSections: { y: number; outline: [number, number][] }[] = [];
+
+  for (const fd of floorDataArr) {
+    if (fd.floor < 0) continue;
+    const wallOutline = fd.hasTerrace
+      ? applyTerraceInset(fd.outline, fd.floorDNA.terraceDepth, fd.aboveIdx)
+      : fd.outline;
+    shellSections.push({ y: fd.y, outline: wallOutline });
+  }
+
+  // ---- Continuous exterior shell ----
   if (shellSections.length >= 2) {
-    // Close the top with the last floor's outline at its top Y
     const lastAbove = aboveGroundFloors[aboveGroundFloors.length - 1];
     if (lastAbove !== undefined) {
       const topY = (floorY.get(lastAbove) ?? 0) + (floorH.get(lastAbove) ?? 3.8);
       shellSections.push({ y: topY, outline: shellSections[shellSections.length - 1].outline });
     }
-    buildContinuousShell(scene, shellSections, dominantDNA);
+    buildContinuousShellToGroup(massGroup, shellSections, dominantDNA);
   }
 
-  // ---- Terrace / setback visualization ----
-  // Terrace floors get a green-tinted slab extension
-  for (let fi = 0; fi < floors.length; fi++) {
-    const floor = floors[fi];
-    if (floor <= 0) continue;
-    const aboveIdx = aboveGroundFloors.indexOf(floor);
-    const floorStyle = nodesByFloor.get(floor)![0]?.style_ref;
-    const floorDNA = getFloorFormDNA(floorStyle, dominantDNA);
-    if (!shouldHaveTerrace(floorDNA, aboveIdx, totalAbove)) continue;
-
-    const y = floorY.get(floor)!;
-    const gScale = floor <= 1 ? floorDNA.groundExpansion : 1;
-    const outline = generateFloorOutline(floorDNA, baseW * gScale, baseD * gScale, aboveIdx, totalAbove);
-    const terraceOutline = applyTerraceInset(outline, floorDNA.terraceDepth, aboveIdx);
-
-    // Terrace slab (thin green plate where building steps back)
-    const terraceGeo = new THREE.ExtrudeGeometry(
-      outlineToShape(outline), { depth: 0.15, bevelEnabled: false },
-    );
-    terraceGeo.rotateX(-Math.PI / 2);
-    const terraceMat = new THREE.MeshStandardMaterial({
-      color: 0x3a6a3a, roughness: 0.55, metalness: 0.05,
-      emissive: 0x2a4a2a, emissiveIntensity: 0.08,
-    });
-    const terrace = new THREE.Mesh(terraceGeo, terraceMat);
-    terrace.position.y = y + 0.3;
-    terrace.receiveShadow = true;
-    const group = floorSlabs.get(floor);
-    if (group) group.add(terrace);
-  }
+  // ---- Loft surface ----
+  buildLoftSurfaceToGroup(massGroup, dominantDNA, baseW, baseD, aboveGroundFloors, floorY, floorH, nodesByFloor);
 
   // ---- Roof treatment ----
+  const floors = floorDataArr.map((fd) => fd.floor).sort((a, b) => a - b);
   const topFloor = floors[floors.length - 1];
   const topY = (floorY.get(topFloor) || 0) + (floorH.get(topFloor) || 3);
-  addRoofTreatment(scene, dominantDNA, baseW, baseD, topY, totalAbove);
+  addRoofTreatmentToGroup(massGroup, dominantDNA, baseW, baseD, topY, totalAbove);
 
   // ---- Entrance canopy ----
   const groundY = floorY.get(0) ?? floorY.get(1) ?? 0;
@@ -577,18 +640,368 @@ function buildBuilding(ref: SceneState, graph: VerticalNodeGraph) {
   const canopy = new THREE.Mesh(canopyGeo, canopyMat);
   canopy.position.set(0, groundY + groundH * 0.65, -(baseD / 2 + 1.8));
   canopy.castShadow = true;
-  scene.add(canopy);
+  massGroup.add(canopy);
+
+  ref.scene.add(massGroup);
 }
 
 // ============================================================
-// Continuous Exterior Shell — Single Opaque Building Skin
+// Floor Detail Builder — on-demand per floor
 // ============================================================
 
-/**
- * Builds a single, continuous, opaque exterior wall surface spanning
- * the full height of the building. Each floor's outline is used as a
- * cross-section; connecting them produces a seamless lofted shell.
- */
+function buildFloorDetail(
+  ref: SceneState,
+  fd: FloorBuildData,
+  isSelected: boolean,
+): THREE.Group {
+  const group = new THREE.Group();
+  const opacity = isSelected ? 1.0 : 0.3;
+
+  // ---- Slab ----
+  const slabThick = 0.3;
+  const slabShape = outlineToShape(fd.outline);
+  const slabGeo = new THREE.ExtrudeGeometry(slabShape, { depth: slabThick, bevelEnabled: false });
+  slabGeo.rotateX(-Math.PI / 2);
+
+  const slabColor = fd.zone === "basement" ? 0x2a2c34 : fd.floor === 0 ? 0x3a3e4a : 0x303440;
+  const slabMat = new THREE.MeshStandardMaterial({
+    color: slabColor, roughness: 0.6, metalness: 0.15,
+    emissive: 0x101418, emissiveIntensity: 0.03,
+    transparent: !isSelected,
+    opacity,
+  });
+  const slab = new THREE.Mesh(slabGeo, slabMat);
+  slab.position.y = fd.y;
+  slab.castShadow = true;
+  slab.receiveShadow = true;
+  group.add(slab);
+
+  // ---- Node dots ----
+  const dotR = 0.35;
+  const dotGeo = new THREE.SphereGeometry(dotR, 8, 6);
+  const dotY = fd.y + fd.h * 0.5;
+
+  for (const node of fd.nodes) {
+    const cat = getFuncCategory(node.function);
+    const color = FUNC_COLORS_HEX[node.function] || ZONE_COLORS_HEX[fd.zone] || 0x555555;
+    const pos = computeDotPosition(node.position, fd.baseW, fd.baseD, fd.coreR);
+
+    const dotMat = new THREE.MeshStandardMaterial({
+      color,
+      transparent: true,
+      opacity: isSelected ? (cat === "core" ? 0.3 : 0.7) : 0.15,
+      roughness: 0.2,
+      metalness: 0.1,
+      emissive: color,
+      emissiveIntensity: isSelected ? 0.25 : 0.05,
+    });
+
+    const dot = new THREE.Mesh(dotGeo, dotMat);
+    dot.position.set(pos.x, dotY, pos.z);
+    dot.userData = { nodeId: node.id, node };
+    group.add(dot);
+
+    if (isSelected) {
+      ref.nodeMeshes.set(node.id, dot);
+      ref.selectables.push(dot);
+    }
+  }
+
+  // ---- Floor label (only for selected floor) ----
+  if (isSelected) {
+    const label = fd.floor < 0 ? `B${Math.abs(fd.floor)}` : `${fd.floor}F`;
+    const sprite = makeLabel(label, 0x6a7890);
+    const labelX = fd.baseW / 2 + 3;
+    sprite.position.set(labelX, fd.y + fd.h / 2, 0);
+    sprite.scale.set(4, 2, 1);
+    group.add(sprite);
+  }
+
+  return group;
+}
+
+// ============================================================
+// Continuous Exterior Shell (to group variant)
+// ============================================================
+
+function buildContinuousShellToGroup(
+  group: THREE.Group,
+  sections: { y: number; outline: [number, number][] }[],
+  dna: ArchitectFormDNA,
+) {
+  if (sections.length < 2) return;
+
+  const targetPts = 40;
+  const normalized = sections.map((s) => ({
+    y: s.y,
+    pts: normalizeOutline(s.outline, targetPts),
+  }));
+
+  const rows = normalized.length;
+  const cols = targetPts;
+  const positions = new Float32Array(rows * cols * 3);
+
+  for (let r = 0; r < rows; r++) {
+    const sec = normalized[r];
+    for (let c = 0; c < cols; c++) {
+      const idx = (r * cols + c) * 3;
+      positions[idx]     = sec.pts[c][0];
+      positions[idx + 1] = sec.y;
+      positions[idx + 2] = sec.pts[c][1];
+    }
+  }
+
+  const indices: number[] = [];
+  for (let r = 0; r < rows - 1; r++) {
+    for (let c = 0; c < cols; c++) {
+      const c1 = (c + 1) % cols;
+      const a = r * cols + c;
+      const b = r * cols + c1;
+      const d = (r + 1) * cols + c;
+      const e = (r + 1) * cols + c1;
+      indices.push(a, d, b);
+      indices.push(b, d, e);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+
+  const mat = new THREE.MeshPhysicalMaterial({
+    color: dna.facadeColor,
+    transparent: false,
+    roughness: Math.max(dna.facadeRoughness * 0.7, 0.08),
+    metalness: Math.min(dna.facadeMetalness + 0.1, 0.75),
+    side: THREE.FrontSide,
+    clearcoat: dna.facadeOpacity > 0.4 ? 0.5 : 0.15,
+    clearcoatRoughness: 0.1,
+    emissive: 0x080c14,
+    emissiveIntensity: 0.05,
+  });
+
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  group.add(mesh);
+}
+
+// ============================================================
+// Loft Surface (to group variant)
+// ============================================================
+
+function buildLoftSurfaceToGroup(
+  group: THREE.Group,
+  dna: ArchitectFormDNA,
+  baseW: number,
+  baseD: number,
+  aboveGroundFloors: number[],
+  floorY: Map<number, number>,
+  floorH: Map<number, number>,
+  nodesByFloor: Map<number, FloorNode[]>,
+) {
+  if (aboveGroundFloors.length < 2) return;
+
+  const totalAbove = aboveGroundFloors.length;
+  const targetPts = 32;
+
+  interface CrossSection {
+    y: number;
+    outline: [number, number][];
+  }
+
+  const sections: CrossSection[] = [];
+
+  for (let fi = 0; fi < aboveGroundFloors.length; fi++) {
+    const floor = aboveGroundFloors[fi];
+    const y = floorY.get(floor)!;
+    const h = floorH.get(floor)!;
+    const nodes = nodesByFloor.get(floor)!;
+
+    const floorStyle = nodes.find((n) => n.style_ref && n.style_ref !== "none")?.style_ref;
+    const floorDNA = getFloorFormDNA(floorStyle, dna);
+    const groundScale = floor <= 1 ? floorDNA.groundExpansion : 1;
+
+    const outline = generateFloorOutline(floorDNA, baseW * groundScale, baseD * groundScale, fi, totalAbove);
+
+    sections.push({ y, outline: normalizeOutline(outline, targetPts) });
+    sections.push({ y: y + h, outline: normalizeOutline(outline, targetPts) });
+  }
+
+  if (sections.length < 2) return;
+
+  const isSculptural = dna.transitionStyle === "sculptural";
+  const interpSegs = isSculptural ? 6 : 4;
+
+  const allSections: CrossSection[] = [];
+
+  for (let si = 0; si < sections.length - 1; si++) {
+    const s0 = sections[Math.max(0, si - 1)];
+    const s1 = sections[si];
+    const s2 = sections[si + 1];
+    const s3 = sections[Math.min(sections.length - 1, si + 2)];
+
+    allSections.push(s1);
+
+    for (let t = 1; t < interpSegs; t++) {
+      const frac = t / interpSegs;
+      const interpY = catmullRom(s0.y, s1.y, s2.y, s3.y, frac);
+      const interpOutline: [number, number][] = [];
+
+      for (let p = 0; p < targetPts; p++) {
+        const x = catmullRom(s0.outline[p][0], s1.outline[p][0], s2.outline[p][0], s3.outline[p][0], frac);
+        const z = catmullRom(s0.outline[p][1], s1.outline[p][1], s2.outline[p][1], s3.outline[p][1], frac);
+        interpOutline.push([x, z]);
+      }
+
+      allSections.push({ y: interpY, outline: interpOutline });
+    }
+  }
+  allSections.push(sections[sections.length - 1]);
+
+  const rows = allSections.length;
+  const cols = targetPts;
+  const vertexCount = rows * cols;
+  const positions = new Float32Array(vertexCount * 3);
+
+  for (let r = 0; r < rows; r++) {
+    const sec = allSections[r];
+    for (let c = 0; c < cols; c++) {
+      const idx = (r * cols + c) * 3;
+      positions[idx] = sec.outline[c][0];
+      positions[idx + 1] = sec.y;
+      positions[idx + 2] = sec.outline[c][1];
+    }
+  }
+
+  const indices: number[] = [];
+  for (let r = 0; r < rows - 1; r++) {
+    for (let c = 0; c < cols; c++) {
+      const c1 = (c + 1) % cols;
+      const a = r * cols + c;
+      const b = r * cols + c1;
+      const d = (r + 1) * cols + c;
+      const e = (r + 1) * cols + c1;
+      indices.push(a, d, b);
+      indices.push(b, d, e);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+
+  const mat = new THREE.MeshPhysicalMaterial({
+    color: dna.facadeColor,
+    transparent: true,
+    opacity: 0.55 + dna.facadeOpacity * 0.35,
+    roughness: dna.facadeRoughness * 0.8,
+    metalness: Math.min(dna.facadeMetalness + 0.15, 0.8),
+    side: THREE.DoubleSide,
+    clearcoat: 0.3,
+    clearcoatRoughness: 0.15,
+    emissive: 0x1a2030,
+    emissiveIntensity: 0.04,
+  });
+
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  group.add(mesh);
+
+  // Wireframe overlay
+  const wireGeo = new THREE.WireframeGeometry(geo);
+  const wireMat = new THREE.LineBasicMaterial({
+    color: 0x506080,
+    transparent: true,
+    opacity: 0.15,
+  });
+  const wireframe = new THREE.LineSegments(wireGeo, wireMat);
+  group.add(wireframe);
+}
+
+// ============================================================
+// Roof Treatment (to group variant)
+// ============================================================
+
+function addRoofTreatmentToGroup(group: THREE.Group, dna: ArchitectFormDNA, baseW: number, baseD: number, topY: number, totalFloors: number) {
+  const outline = generateFloorOutline(dna, baseW, baseD, totalFloors - 1, totalFloors);
+
+  switch (dna.roofStyle) {
+    case "garden": {
+      const shape = outlineToShape(outline);
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.2, bevelEnabled: false });
+      geo.rotateX(-Math.PI / 2);
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0x3a6a3a, roughness: 0.65, metalness: 0.05,
+        emissive: 0x2a4a2a, emissiveIntensity: 0.08,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.y = topY + 0.1;
+      mesh.receiveShadow = true;
+      group.add(mesh);
+      break;
+    }
+    case "crown": {
+      const shape = outlineToShape(outline.map(([x, z]) => [x * 0.85, z * 0.85] as [number, number]));
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: 2.5, bevelEnabled: true, bevelSize: 0.3, bevelThickness: 0.3 });
+      geo.rotateX(-Math.PI / 2);
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0x505878, roughness: 0.25, metalness: 0.55,
+        emissive: 0x2a2a48, emissiveIntensity: 0.06,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.y = topY;
+      mesh.castShadow = true;
+      group.add(mesh);
+      break;
+    }
+    case "sculptural": {
+      const geo = new THREE.SphereGeometry(Math.min(baseW, baseD) * 0.15, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2);
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0x505868, roughness: 0.35, metalness: 0.35,
+        emissive: 0x252838, emissiveIntensity: 0.06,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.y = topY;
+      mesh.castShadow = true;
+      group.add(mesh);
+      break;
+    }
+    case "sloped": {
+      const shape = outlineToShape(outline);
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: 3.0, bevelEnabled: true, bevelSize: 1.5, bevelSegments: 3, bevelThickness: 1.5 });
+      geo.rotateX(-Math.PI / 2);
+      geo.scale(1, 0.5, 1);
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0x404858, roughness: 0.45, metalness: 0.25,
+      });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.y = topY;
+      mesh.castShadow = true;
+      group.add(mesh);
+      break;
+    }
+    default: {
+      const shape = outlineToShape(outline);
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.8, bevelEnabled: false });
+      geo.rotateX(-Math.PI / 2);
+      const edges = new THREE.EdgesGeometry(geo);
+      const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({
+        color: 0x4a5068, transparent: true, opacity: 0.45,
+      }));
+      line.position.y = topY;
+      group.add(line);
+    }
+  }
+}
+
+// ============================================================
+// Original utility functions (kept unchanged)
+// ============================================================
+
 function buildContinuousShell(
   scene: THREE.Scene,
   sections: { y: number; outline: [number, number][] }[],
@@ -616,7 +1029,6 @@ function buildContinuousShell(
     }
   }
 
-  // Quad-strip indices (closed loop per row)
   const indices: number[] = [];
   for (let r = 0; r < rows - 1; r++) {
     for (let c = 0; c < cols; c++) {
@@ -653,19 +1065,6 @@ function buildContinuousShell(
   scene.add(mesh);
 }
 
-// ============================================================
-// Loft Surface — Smooth Parametric Skin
-// ============================================================
-
-/**
- * Creates a continuous loft surface between floor plate outlines.
- * For smooth architects (Hadid, Gaudi, Aalto, Snohetta), this replaces
- * the per-floor discrete facade with a flowing parametric surface.
- *
- * The technique: collect 2D outlines at each floor height, normalize
- * point counts, then build a BufferGeometry by connecting corresponding
- * points between floors with Catmull-Rom interpolation.
- */
 function buildLoftSurface(
   scene: THREE.Scene,
   dna: ArchitectFormDNA,
@@ -679,9 +1078,8 @@ function buildLoftSurface(
   if (aboveGroundFloors.length < 2) return;
 
   const totalAbove = aboveGroundFloors.length;
-  const targetPts = 32; // normalize all outlines to this count
+  const targetPts = 32;
 
-  // Collect cross-sections: { height, outline }
   interface CrossSection {
     y: number;
     outline: [number, number][];
@@ -701,19 +1099,15 @@ function buildLoftSurface(
 
     const outline = generateFloorOutline(floorDNA, baseW * groundScale, baseD * groundScale, fi, totalAbove);
 
-    // Bottom of floor
     sections.push({ y, outline: normalizeOutline(outline, targetPts) });
-    // Top of floor (for correct height)
     sections.push({ y: y + h, outline: normalizeOutline(outline, targetPts) });
   }
 
   if (sections.length < 2) return;
 
-  // Interpolation segments between sections
   const isSculptural = dna.transitionStyle === "sculptural";
-  const interpSegs = isSculptural ? 6 : 4; // more segments = smoother
+  const interpSegs = isSculptural ? 6 : 4;
 
-  // Build interpolated cross-sections using Catmull-Rom
   const allSections: CrossSection[] = [];
 
   for (let si = 0; si < sections.length - 1; si++) {
@@ -740,7 +1134,6 @@ function buildLoftSurface(
   }
   allSections.push(sections[sections.length - 1]);
 
-  // Build BufferGeometry from loft
   const rows = allSections.length;
   const cols = targetPts;
   const vertexCount = rows * cols;
@@ -757,7 +1150,6 @@ function buildLoftSurface(
     }
   }
 
-  // Indices (quad mesh)
   const indices: number[] = [];
   for (let r = 0; r < rows - 1; r++) {
     for (let c = 0; c < cols; c++) {
@@ -794,7 +1186,6 @@ function buildLoftSurface(
   mesh.receiveShadow = true;
   scene.add(mesh);
 
-  // Wireframe overlay (subtle panel lines on curved surface)
   const wireGeo = new THREE.WireframeGeometry(geo);
   const wireMat = new THREE.LineBasicMaterial({
     color: 0x506080,
@@ -805,9 +1196,6 @@ function buildLoftSurface(
   scene.add(wireframe);
 }
 
-/**
- * Catmull-Rom spline interpolation for a single value
- */
 function catmullRom(p0: number, p1: number, p2: number, p3: number, t: number): number {
   const t2 = t * t;
   const t3 = t2 * t;
@@ -819,22 +1207,16 @@ function catmullRom(p0: number, p1: number, p2: number, p3: number, t: number): 
   );
 }
 
-/**
- * Normalize an outline to exactly `count` evenly-spaced points
- * by resampling along the polygon perimeter.
- */
 function normalizeOutline(outline: [number, number][], count: number): [number, number][] {
   if (outline.length === count) return outline;
   if (outline.length === 0) return Array(count).fill([0, 0]) as [number, number][];
 
-  // Compute cumulative arc lengths
   const arcLens: number[] = [0];
   for (let i = 1; i < outline.length; i++) {
     const dx = outline[i][0] - outline[i - 1][0];
     const dz = outline[i][1] - outline[i - 1][1];
     arcLens.push(arcLens[i - 1] + Math.sqrt(dx * dx + dz * dz));
   }
-  // Close the loop
   const dx = outline[0][0] - outline[outline.length - 1][0];
   const dz = outline[0][1] - outline[outline.length - 1][1];
   const totalLen = arcLens[arcLens.length - 1] + Math.sqrt(dx * dx + dz * dz);
@@ -843,7 +1225,6 @@ function normalizeOutline(outline: [number, number][], count: number): [number, 
   for (let i = 0; i < count; i++) {
     const targetLen = (i / count) * totalLen;
 
-    // Find segment
     let seg = 0;
     for (seg = 0; seg < arcLens.length - 1; seg++) {
       if (arcLens[seg + 1] >= targetLen) break;
@@ -851,7 +1232,7 @@ function normalizeOutline(outline: [number, number][], count: number): [number, 
 
     const segLen = seg < arcLens.length - 1
       ? arcLens[seg + 1] - arcLens[seg]
-      : totalLen - arcLens[arcLens.length - 1]; // last segment to close
+      : totalLen - arcLens[arcLens.length - 1];
 
     const t = segLen > 0 ? (targetLen - arcLens[seg]) / segLen : 0;
 
@@ -871,17 +1252,12 @@ function normalizeOutline(outline: [number, number][], count: number): [number, 
 // Wall Surface Geometry
 // ============================================================
 
-/**
- * Build a wall-only surface: ring of vertical quads around the outline.
- * No top/bottom caps — just the outer skin, like a real building envelope.
- */
 function buildWallGeometry(outline: [number, number][], height: number): THREE.BufferGeometry {
   const n = outline.length;
   const positions = new Float32Array(n * 6 * 3);
   const normals = new Float32Array(n * 6 * 3);
   const uvs = new Float32Array(n * 6 * 2);
 
-  // Compute total perimeter for UV mapping
   let perimeter = 0;
   for (let i = 0; i < n; i++) {
     const [x1, z1] = outline[i];
@@ -895,17 +1271,14 @@ function buildWallGeometry(outline: [number, number][], height: number): THREE.B
     const [x2, z2] = outline[(i + 1) % n];
     const segLen = Math.sqrt((x2 - x1) ** 2 + (z2 - z1) ** 2);
 
-    // Outward normal
     const dx = x2 - x1, dz = z2 - z1;
     const len = Math.sqrt(dx * dx + dz * dz) || 1;
     const nx = dz / len, nz = -dx / len;
 
     const b = i * 18;
-    // Triangle 1: BL, BR, TR
     positions[b]     = x1; positions[b + 1]  = 0;      positions[b + 2]  = z1;
     positions[b + 3] = x2; positions[b + 4]  = 0;      positions[b + 5]  = z2;
     positions[b + 6] = x2; positions[b + 7]  = height; positions[b + 8]  = z2;
-    // Triangle 2: BL, TR, TL
     positions[b + 9]  = x1; positions[b + 10] = 0;      positions[b + 11] = z1;
     positions[b + 12] = x2; positions[b + 13] = height; positions[b + 14] = z2;
     positions[b + 15] = x1; positions[b + 16] = height; positions[b + 17] = z1;
@@ -916,7 +1289,6 @@ function buildWallGeometry(outline: [number, number][], height: number): THREE.B
       normals[b + v * 3 + 2] = nz;
     }
 
-    // UVs for texture mapping
     const u0 = uAccum / perimeter;
     const u1 = (uAccum + segLen) / perimeter;
     const ub = i * 12;
@@ -937,10 +1309,6 @@ function buildWallGeometry(outline: [number, number][], height: number): THREE.B
   return geo;
 }
 
-/**
- * Add mullion lines on the facade — vertical + horizontal divisions
- * that give the building envelope visual detail and scale.
- */
 function addMullionGrid(
   group: THREE.Group,
   outline: [number, number][],
@@ -952,7 +1320,6 @@ function addMullionGrid(
   const mat = new THREE.LineBasicMaterial({ color, transparent: true, opacity });
   const n = outline.length;
 
-  // Vertical mullions — every few outline points
   const step = Math.max(2, Math.floor(n / 16));
   const verts: number[] = [];
   for (let i = 0; i < n; i += step) {
@@ -960,7 +1327,6 @@ function addMullionGrid(
     verts.push(x, baseY, z, x, baseY + height, z);
   }
 
-  // Horizontal band at mid-height (spandrel line)
   const midY = baseY + height * 0.5;
   for (let i = 0; i < n; i++) {
     const [x1, z1] = outline[i];
@@ -987,7 +1353,6 @@ function addDiagridSegment(group: THREE.Group, outline: [number, number][], base
   for (let i = 0; i < pts.length; i += step) {
     const [x1, z1] = pts[i];
     const [x2, z2] = pts[(i + step) % pts.length];
-    // Diagonal cross
     const positions = new Float32Array([
       x1, baseY, z1, x2, baseY + height, z2,
       x2, baseY, z2, x1, baseY + height, z1,
@@ -1005,8 +1370,7 @@ function addExoskeletonSegment(group: THREE.Group, outline: [number, number][], 
 
   for (let i = 0; i < pts.length; i += step) {
     const [x, z] = pts[i];
-    // Vertical strut
-    const nx = x * 1.05, nz = z * 1.05; // slightly outside building
+    const nx = x * 1.05, nz = z * 1.05;
     const positions = new Float32Array([nx, baseY, nz, nx, baseY + height, nz]);
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
@@ -1092,7 +1456,6 @@ function addRoofTreatment(scene: THREE.Scene, dna: ArchitectFormDNA, baseW: numb
       break;
     }
     default: {
-      // Flat roof - just parapet wireframe
       const shape = outlineToShape(outline);
       const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.8, bevelEnabled: false });
       geo.rotateX(-Math.PI / 2);
@@ -1121,8 +1484,7 @@ function outlineToShape(outline: [number, number][]): THREE.Shape {
 }
 
 function applyTerraceInset(outline: [number, number][], depth: number, seed: number): [number, number][] {
-  // Inset one side based on seed
-  const side = seed % 4; // 0=south, 1=east, 2=north, 3=west
+  const side = seed % 4;
   return outline.map(([x, z]) => {
     switch (side) {
       case 0: return z < 0 ? [x, z + depth] as [number, number] : [x, z] as [number, number];
@@ -1134,15 +1496,14 @@ function applyTerraceInset(outline: [number, number][], depth: number, seed: num
   });
 }
 
-/** Place dots within the floor plate based on cardinal position */
 function computeDotPosition(
   pos: string,
   floorW: number,
   floorD: number,
   coreR: number,
 ): { x: number; z: number } {
-  const rx = floorW * 0.32; // spread radius X
-  const rz = floorD * 0.32; // spread radius Z
+  const rx = floorW * 0.32;
+  const rz = floorD * 0.32;
   switch (pos) {
     case "north":     return { x: 0,   z: rz };
     case "south":     return { x: 0,   z: -rz };
@@ -1152,7 +1513,7 @@ function computeDotPosition(
     case "northwest": return { x: -rx * 0.7, z: rz * 0.7 };
     case "southeast": return { x: rx * 0.7,  z: -rz * 0.7 };
     case "southwest": return { x: -rx * 0.7, z: -rz * 0.7 };
-    default:          return { x: 0, z: 0 }; // center
+    default:          return { x: 0, z: 0 };
   }
 }
 

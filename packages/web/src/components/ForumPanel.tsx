@@ -251,7 +251,16 @@ export function ForumPanel() {
         <h2 style={{ fontSize: 14, color: "#fff", margin: 0 }}>
           Architect Forum
         </h2>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          {(state.historicalForumResult || state.status === "all_complete") && (
+            <button
+              onClick={() => dispatch({ type: "RESET" })}
+              style={newSessionBtnStyle}
+              title="Start a new session"
+            >
+              + New
+            </button>
+          )}
           <button
             onClick={() => setShowHistory((v) => !v)}
             style={historyBtnStyle}
@@ -484,6 +493,17 @@ const headerStyle: React.CSSProperties = {
   justifyContent: "space-between",
   alignItems: "center",
   flexShrink: 0,
+};
+
+const newSessionBtnStyle: React.CSSProperties = {
+  background: "#1a2a1a",
+  border: "1px solid #2a4a2a",
+  borderRadius: 4,
+  color: "#6a9a6a",
+  fontSize: 10,
+  padding: "2px 8px",
+  cursor: "pointer",
+  fontFamily: "inherit",
 };
 
 const historyBtnStyle: React.CSSProperties = {
