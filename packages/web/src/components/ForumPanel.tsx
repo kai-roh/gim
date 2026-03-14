@@ -59,21 +59,40 @@ export function ForumPanel() {
     if (showHistory) loadSessions();
   }, [showHistory, loadSessions]);
 
-  // Load a past session's graph
+  // Load a past session: graph + discussion
   const loadSessionGraph = useCallback(async (sessionId: string) => {
     try {
-      const resp = await fetch(`/api/sessions/${sessionId}/graph`);
-      if (resp.ok) {
-        const graphData = await resp.json();
-        graph.dispatch({ type: "LOAD_GRAPH_SUCCESS", graph: graphData });
-        const s = sessions.find((s) => s.id === sessionId);
-        addMessage("system", `Loaded: ${s?.company ?? "Unknown"} — ${s?.location ?? ""} (${graphData.nodes?.length ?? 0} nodes)`);
-        setShowHistory(false);
+      const [graphResp, forumResp] = await Promise.all([
+        fetch(`/api/sessions/${sessionId}/graph`),
+        fetch(`/api/sessions/${sessionId}/forum`),
+      ]);
+
+      if (!graphResp.ok) {
+        addMessage("system", "Failed to load session graph.");
+        return;
       }
+
+      const [graphData, forumResult] = await Promise.all([
+        graphResp.json(),
+        forumResp.ok ? forumResp.json() : null,
+      ]);
+
+      // Update graph viewer
+      graph.dispatch({ type: "LOAD_GRAPH_SUCCESS", graph: graphData });
+
+      // Restore forum discussion + enable rendering
+      if (forumResult && !forumResult.error) {
+        dispatch({ type: "LOAD_HISTORICAL_SESSION", forumResult });
+      } else {
+        const s = sessions.find((s) => s.id === sessionId);
+        addMessage("system", `Graph loaded: ${s?.company ?? "Unknown"} — ${s?.location ?? ""} (${graphData.nodes?.length ?? 0} nodes)`);
+      }
+
+      setShowHistory(false);
     } catch {
       addMessage("system", "Failed to load session.");
     }
-  }, [graph, sessions, addMessage]);
+  }, [graph, sessions, dispatch, addMessage, setShowHistory]);
 
   const canStart = state.selectedArchitects.length >= 2 && !state.sessionId;
   const isStreaming = state.status === "streaming";

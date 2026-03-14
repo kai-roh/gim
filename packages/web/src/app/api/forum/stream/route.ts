@@ -60,6 +60,12 @@ export async function GET(request: Request) {
     return new Response("Session already running", { status: 409 });
   }
 
+  // Snapshot previous phase responses before resetting for this phase
+  const previousResponses = entry.currentPhaseResponses.length > 0
+    ? [...entry.currentPhaseResponses]
+    : undefined;
+  // Reset for the new phase
+  entry.currentPhaseResponses = [];
   entry.status = "running";
   const abortController = new AbortController();
   entry.abortController = abortController;
@@ -74,9 +80,6 @@ export async function GET(request: Request) {
       }
 
       try {
-        const previousResponses = entry.currentPhaseResponses.length > 0
-          ? entry.currentPhaseResponses
-          : undefined;
 
         await runPhaseStreaming(
           entry.session,
@@ -100,14 +103,13 @@ export async function GET(request: Request) {
           { dataDir: DATA_DIR }
         );
 
-        // Generate graph from forum results
-        try {
-          const forumResult = sessionToForumResult(entry.session);
-          const graph = buildGraphFromForumResult(forumResult);
-          send("forum:graph_generated", { graph });
+        // Generate graph only after final convergence phase
+        if (phase === "convergence") {
+          try {
+            const forumResult = sessionToForumResult(entry.session);
+            const graph = buildGraphFromForumResult(forumResult);
+            send("forum:graph_generated", { graph });
 
-          // Save to disk only on final phase (convergence)
-          if (phase === "convergence") {
             const ts = kstTimestamp();
             const forumPath = saveForumResult(entry.session, ts);
             const graphPath = saveGraphOutput(graph, ts);
@@ -115,10 +117,10 @@ export async function GET(request: Request) {
               forumPath: forumPath ? path.basename(forumPath) : null,
               graphPath: graphPath ? path.basename(graphPath) : null,
             });
+          } catch (graphErr) {
+            const msg = graphErr instanceof Error ? graphErr.message : "Graph generation failed";
+            send("forum:graph_error", { error: msg });
           }
-        } catch (graphErr) {
-          const msg = graphErr instanceof Error ? graphErr.message : "Graph generation failed";
-          send("forum:graph_error", { error: msg });
         }
 
         entry.status = "completed";

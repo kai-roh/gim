@@ -42,6 +42,8 @@ export interface ForumState {
   error: string | null;
   brief: string | null;
   autoRunning: boolean;
+  // Loaded historical session data (for rendering without active session)
+  historicalForumResult: Record<string, unknown> | null;
 }
 
 const initialState: ForumState = {
@@ -57,6 +59,7 @@ const initialState: ForumState = {
   error: null,
   brief: null,
   autoRunning: false,
+  historicalForumResult: null,
 };
 
 // ============================================================
@@ -77,7 +80,9 @@ export type ForumAction =
   | { type: "ALL_COMPLETE" }
   | { type: "SET_AUTO_RUNNING"; running: boolean }
   | { type: "ERROR"; error: string }
-  | { type: "RESET" };
+  | { type: "RESET" }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  | { type: "LOAD_HISTORICAL_SESSION"; forumResult: any };
 
 // ============================================================
 // Reducer
@@ -165,6 +170,79 @@ function forumReducer(state: ForumState, action: ForumAction): ForumState {
 
     case "RESET":
       return { ...initialState, architects: state.architects };
+
+    case "LOAD_HISTORICAL_SESSION": {
+      const fr = action.forumResult;
+      const panel: string[] = fr.panel ?? [];
+      const rounds: any[] = fr.rounds ?? [];
+
+      const PHASE_NAMES: Record<string, string> = {
+        proposal: "발제 (Proposal)",
+        cross_critique: "교차 비평 (Cross Critique)",
+        convergence: "수렴 (Convergence)",
+      };
+
+      const messages: ForumMessage[] = [
+        {
+          id: `hist_loaded_${Date.now()}`,
+          type: "system",
+          content: `[History] ${fr.project?.company?.name ?? "Unknown"} — ${fr.project?.site?.location ?? ""}\nPanel: ${panel.map((p: string) => p.replace(/_/g, " ")).join(", ")}`,
+          timestamp: Date.now(),
+        },
+      ];
+
+      const phasesMap = new Map<DiscussionPhase, { architectId: string; response: ArchitectResponse }[]>();
+
+      for (const round of rounds) {
+        const phase = round.phase as DiscussionPhase;
+        messages.push({
+          id: `hist_phase_${round.round}_${phase}`,
+          type: "phase",
+          content: `── ${PHASE_NAMES[phase] ?? phase} ──`,
+          phase,
+          timestamp: Date.now() + round.round,
+        });
+
+        const phaseResponses = phasesMap.get(phase) ?? [];
+        for (const resp of round.responses ?? []) {
+          const architectId: string = resp.architect_id ?? resp.architectId ?? "unknown";
+          const response = resp as ArchitectResponse;
+          phaseResponses.push({ architectId, response });
+
+          const zoningText = response.proposal?.vertical_zoning
+            ?.slice(0, 3)
+            .map((z: any) => `  ${z.zone}: ${z.floors[0]}~${z.floors[1]}F — ${z.primary_function}`)
+            .join("\n") ?? "";
+
+          messages.push({
+            id: `hist_arch_${round.round}_${architectId}`,
+            type: "architect",
+            content: `${response.stance ?? ""}\n\n${(response.reasoning ?? "").slice(0, 300)}${(response.reasoning?.length ?? 0) > 300 ? "..." : ""}${zoningText ? "\n\n" + zoningText : ""}`,
+            architectId,
+            phase,
+            timestamp: Date.now() + round.round + 0.1,
+          });
+        }
+        phasesMap.set(phase, phaseResponses);
+      }
+
+      const phases = Array.from(phasesMap.entries()).map(([phase, responses]) => ({ phase, responses }));
+
+      return {
+        ...state,
+        sessionId: null,
+        selectedArchitects: panel,
+        currentPhase: "convergence",
+        phases,
+        messages,
+        streamingArchitectId: null,
+        streamingTokens: "",
+        status: "all_complete",
+        autoRunning: false,
+        error: null,
+        historicalForumResult: fr,
+      };
+    }
 
     default:
       return state;

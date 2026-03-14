@@ -55,6 +55,8 @@ export type {
   AdjacencyRule,
   ConsensusZone,
   ForumResult,
+  FloorPlateData,
+  FloorGeometry,
 } from "./graph/types";
 
 export { NODE_FUNCTION_CATEGORY } from "./graph/types";
@@ -100,6 +102,17 @@ export {
   evaluateGraphFull,
 } from "./graph/evaluation";
 export type { EvaluationResult, EvaluationIssue } from "./graph/evaluation";
+
+// Form — Architect FormDNA
+export {
+  ARCHITECT_FORM_DNA,
+  generateFloorOutline,
+  isInVoidCut,
+  shouldHaveTerrace,
+  getDominantFormDNA,
+  getFloorFormDNA,
+} from "./form/architect-form";
+export type { ArchitectFormDNA, VoidCut } from "./form/architect-form";
 
 // Graph — Rules
 export {

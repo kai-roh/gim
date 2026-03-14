@@ -189,6 +189,72 @@ export interface FloorNode {
   style_ref?: string;
   tags: string[];
   geometry_ref?: string;
+
+  // Dimensional data (meters)
+  area?: number;
+  dimensions?: { width: number; depth: number };
+  ceiling_height?: number;
+
+  // Spatial topology
+  facade_exposure?: ("north" | "south" | "east" | "west")[];
+  is_double_height?: boolean;
+  has_void?: boolean;
+  has_terrace?: boolean;
+
+  // Form modifiers
+  form?: {
+    cantilever?: { direction: string; distance: number };
+    setback?: number;
+    rotation?: number;
+  };
+
+  // Per-floor computed geometry (from FormDNA at build time)
+  geometry?: FloorGeometry;
+}
+
+/**
+ * Per-floor geometry parameters — computed from ArchitectFormDNA
+ * and stored on each FloorNode so the graph is geometrically self-describing.
+ */
+export interface FloorGeometry {
+  // Plan transform (relative to base footprint)
+  rotation: number;          // degrees from base orientation
+  scale_x: number;           // X-axis scale (1.0 = base footprint)
+  scale_z: number;           // Z-axis scale
+  offset_x: number;          // X shift (meters, cantilever/setback)
+  offset_z: number;          // Z shift (meters)
+
+  // Section
+  floor_height: number;      // floor-to-floor height (meters)
+  slab_thickness: number;    // slab thickness (meters)
+  is_void: boolean;          // this floor is a void (open air)
+
+  // Facade
+  corner_treatment: "sharp" | "rounded" | "chamfered" | "sculpted";
+  corner_radius: number;     // meters
+  facade_opacity: number;    // 0-1 (0 = solid wall, 1 = full glass)
+  facade_inclination: number; // degrees (0 = vertical, + = lean out)
+
+  // Outline (pre-computed 2D polygon)
+  outline: [number, number][];
+}
+
+// ============================================================
+// Floor Plate Geometry (per-floor outline for 3D rendering)
+// ============================================================
+
+export interface FloorPlateData {
+  floor_level: number;
+  outline: [number, number][];  // 2D polygon vertices (x, z) in meters
+  height: number;               // floor-to-floor height in meters
+  rotation: number;             // degrees from base orientation
+  offset: [number, number];     // [x, z] shift from building center
+  scale: [number, number];      // [x, z] scale factors
+  style_ref?: string;
+  is_underground: boolean;
+  is_void?: boolean;            // void floor (open air sky garden etc.)
+  corner_treatment?: "sharp" | "rounded" | "chamfered" | "sculpted";
+  corner_radius?: number;
 }
 
 export type VoxelEdgeType =
@@ -218,6 +284,7 @@ export interface VerticalNodeGraph {
   program: ProgramGraph;
   nodes: FloorNode[];
   edges: VoxelEdge[];
+  floor_plates?: FloorPlateData[];
   metadata: {
     created_at: string;
     source_forum: string;

@@ -199,11 +199,12 @@ async function callArchitect(
   client: Anthropic,
   systemPrompt: string,
   userPrompt: string,
-  model: string
+  model: string,
+  maxTokens: number = 3500
 ): Promise<ArchitectResponse> {
   const response = await client.messages.create({
     model,
-    max_tokens: 4096,
+    max_tokens: maxTokens,
     system: systemPrompt,
     messages: [{ role: "user", content: userPrompt }],
   });
@@ -223,11 +224,12 @@ async function callArchitectStreaming(
   userPrompt: string,
   model: string,
   architectId: string,
-  callbacks?: StreamCallbacks
+  callbacks?: StreamCallbacks,
+  maxTokens: number = 3500
 ): Promise<ArchitectResponse> {
   const stream = client.messages.stream({
     model,
-    max_tokens: 4096,
+    max_tokens: maxTokens,
     system: systemPrompt,
     messages: [{ role: "user", content: userPrompt }],
   });
@@ -283,8 +285,16 @@ export async function runPhase(
 }
 
 // ============================================================
-// Run Phase (streaming mode — sequential execution for UX)
+// Run Phase (streaming mode — parallel execution with streaming UX)
 // ============================================================
+
+// Max tokens per phase — proposal needs detail, later phases are shorter
+const PHASE_MAX_TOKENS: Record<string, number> = {
+  proposal: 3500,
+  cross_critique: 2500,
+  convergence: 2500,
+  expert_review: 2000,
+};
 
 export async function runPhaseStreaming(
   session: ForumSession,
@@ -296,11 +306,11 @@ export async function runPhaseStreaming(
   const client = new Anthropic();
   const model = options?.model ?? "claude-sonnet-4-20250514";
   const panel = buildPanel(session.panel, options?.dataDir);
+  const maxTokens = PHASE_MAX_TOKENS[phase] ?? 3500;
 
-  const results: { id: string; response: ArchitectResponse }[] = [];
-
-  // Sequential execution so users can follow the discussion
-  for (const a of panel) {
+  // Parallel execution — all architects stream simultaneously
+  // onArchitectStart fires immediately; tokens interleave as they arrive
+  const promises = panel.map(async (a) => {
     callbacks.onArchitectStart?.(a.id);
 
     const others = previousResponses?.filter((p) => p.id !== a.id);
@@ -312,12 +322,15 @@ export async function runPhaseStreaming(
       userPrompt,
       model,
       a.id,
-      callbacks
+      callbacks,
+      maxTokens
     );
 
     callbacks.onArchitectComplete?.(a.id, resp);
-    results.push({ id: a.id, response: resp });
-  }
+    return { id: a.id, response: resp };
+  });
+
+  const results = await Promise.all(promises);
 
   const round: ForumRound = {
     round: session.rounds.length + 1,

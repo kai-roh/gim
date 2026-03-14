@@ -10,6 +10,7 @@ import { MassViewer3D } from "./MassViewer3D";
 import { NodeInspector } from "./NodeInspector";
 import { NodeEditor } from "./NodeEditor";
 import { EvaluationDashboard } from "./EvaluationDashboard";
+import { RenderPanel } from "./RenderPanel";
 
 function AppContent() {
   const { loadGraph, state, dispatch, undo, redo } = useGraph();
@@ -81,6 +82,7 @@ function AppContent() {
               {/* W3: 3D Viewer */}
               <div style={viewer3dPanelStyle}>
                 <MassViewer3D />
+                <RenderPanel />
               </div>
 
               {/* Right: Node Inspector + Editor + Evaluation */}
