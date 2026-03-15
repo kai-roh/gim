@@ -35,6 +35,30 @@ const FALLBACK_CONTEXT: ProjectContext = {
   client_vision: "",
 };
 
+function createNeutralContext(brief?: string): ProjectContext {
+  return {
+    site: {
+      location: "",
+      dimensions: [0, 0],
+      far: 0,
+      bcr: 0,
+      height_limit: 0,
+      context: {
+        north: "",
+        south: "",
+        east: "",
+        west: "",
+      },
+    },
+    program: {
+      total_gfa: 0,
+      uses: [],
+    },
+    constraints: [],
+    client_vision: brief?.trim() || undefined,
+  };
+}
+
 /**
  * Parse a natural-language project brief into a structured ProjectContext
  * using Claude (haiku for speed).

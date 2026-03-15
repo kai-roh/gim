@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import * as fs from "fs";
 import * as path from "path";
-import { withResolvedMassModel } from "@gim/core/graph/resolved-model";
+import { withResolvedMassModel } from "@gim/core";
 import type { SpatialMassGraph, MassNode, MassRelation, RelativeScale, RelativePlacement } from "@gim/core";
 import { inverseRuleFor } from "@gim/core";
 
@@ -52,6 +52,21 @@ function normalizeLegacyGraph(raw: Record<string, any>): SpatialMassGraph {
         vertical_placement: PLACEMENT_MAP[n.floor_zone ?? ""] ?? n.geometry?.vertical_placement ?? "grounded",
         span_character: n.geometry?.span_character ?? "single",
         orientation: n.geometry?.orientation ?? "orthogonal",
+        story_count: n.geometry?.story_count ?? null,
+        floor_to_floor_m: n.geometry?.floor_to_floor_m ?? null,
+        target_gfa_m2: n.geometry?.target_gfa_m2 ?? null,
+        height_m: n.geometry?.height_m ?? null,
+        plan_aspect_ratio: n.geometry?.plan_aspect_ratio ?? null,
+        story_span: n.geometry?.story_span ?? { start: null, end: null },
+      },
+      variant_space: n.variant_space ?? {
+        alternative_primitives: [],
+        aspect_ratio_range: { min: null, max: null },
+        footprint_scale_range: { min: null, max: null },
+        height_scale_range: { min: null, max: null },
+        radial_distance_scale_range: { min: null, max: null },
+        angle_jitter_deg: null,
+        freedom: "fixed",
       },
       relative_position: n.relative_position ?? {
         anchor_to: null,
@@ -90,6 +105,10 @@ function normalizeLegacyGraph(raw: Record<string, any>): SpatialMassGraph {
       clearance: "medium",
     },
     evidence: r.evidence ?? [],
+    variant_space: r.variant_space ?? {
+      distance_scale_range: { min: null, max: null },
+      lateral_offset_range_m: { min: null, max: null },
+    },
   } satisfies MassRelation));
 
   return {

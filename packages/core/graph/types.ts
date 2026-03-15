@@ -8,12 +8,17 @@ import type {
   ForumRound,
   DiscussionPhase,
   MassGeometryProposal,
+  MassNodeVariantSpaceProposal,
   MassNarrativeProposal,
   MassNodeKind,
   NodeHierarchy,
   MassRelationFamily,
   MassRelationRule,
+  MassRelationVariantSpaceProposal,
   RelativeScale,
+  StorySpan,
+  NumericRange,
+  VariantFreedom,
 } from "../forum/types";
 
 export type {
@@ -21,6 +26,7 @@ export type {
   NodeHierarchy,
   MassPrimitive,
   RelativeScale,
+  StorySpan,
   RelativeProportion,
   SkinTransparency,
   Porosity,
@@ -28,9 +34,13 @@ export type {
   SpanCharacter,
   SurfaceOrientation,
   MassGeometryProposal,
+  MassNodeVariantSpaceProposal,
   MassNarrativeProposal,
   MassRelationFamily,
   MassRelationRule,
+  MassRelationVariantSpaceProposal,
+  NumericRange,
+  VariantFreedom,
 } from "../forum/types";
 
 export interface ProjectFrame {
@@ -60,6 +70,7 @@ export interface MassNode {
   hierarchy: NodeHierarchy;
   spatial_role: string;
   geometry: MassGeometryProposal;
+  variant_space: MassNodeVariantSpaceProposal;
   relative_position: {
     anchor_to?: string;
     relation_hint?: string;
@@ -92,6 +103,7 @@ export interface MassRelation {
   weight: number;
   rationale: string;
   constraints: MassRelationConstraint;
+  variant_space: MassRelationVariantSpaceProposal;
   evidence: RelationEvidence[];
 }
 

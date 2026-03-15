@@ -3,8 +3,7 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useForum, type ArchitectSummary, type ForumMessage } from "@/lib/forum-context";
 import { useGraph } from "@/lib/graph-context";
-import type { DiscussionPhase, SpatialMassGraph } from "@gim/core";
-import { massColor } from "@/lib/graph-colors";
+import type { DiscussionPhase } from "@gim/core";
 
 const PHASE_ORDER: DiscussionPhase[] = ["proposal", "cross_critique", "convergence"];
 const PHASE_LABELS: Record<DiscussionPhase, string> = {
@@ -26,61 +25,6 @@ interface SessionSummary {
   nodeCount: number;
   relationCount: number;
   hasGraph: boolean;
-}
-
-function triggerJsonDownload(data: unknown, filename: string) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], {
-    type: "application/json",
-  });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
-}
-
-function withDisplayColorsInGraph(graph: SpatialMassGraph) {
-  return {
-    ...graph,
-    nodes: graph.nodes.map((node) => ({
-      ...node,
-      properties: {
-        ...node.properties,
-        display_color: massColor(node.id),
-      },
-    })),
-  };
-}
-
-function withDisplayColorsInForumResult(result: any) {
-  return {
-    ...result,
-    rounds: Array.isArray(result?.rounds)
-      ? result.rounds.map((round: any) => ({
-          ...round,
-          responses: Array.isArray(round?.responses)
-            ? round.responses.map((response: any) => ({
-                ...response,
-                proposal: {
-                  ...response.proposal,
-                  mass_entities: Array.isArray(response?.proposal?.mass_entities)
-                    ? response.proposal.mass_entities.map((node: any) => ({
-                        ...node,
-                        properties: {
-                          ...(node.properties ?? {}),
-                          display_color: massColor(node.id),
-                        },
-                      }))
-                    : response?.proposal?.mass_entities,
-                },
-              }))
-            : round?.responses,
-        }))
-      : result?.rounds,
-  };
 }
 
 export function ForumPanel() {
@@ -156,9 +100,11 @@ export function ForumPanel() {
 
   const canStart = state.selectedArchitects.length >= 2 && !state.sessionId;
   const isStreaming = state.status === "streaming";
-  const hasFinalGraph = !!graph.state.graph;
   const composerLabel = state.sessionId ? "Send" : "Run Forum";
   const composerDisabled = isStreaming || input.trim().length === 0 || (!state.sessionId && !canStart);
+  const streamingArchitectName =
+    state.architects.find((architect) => architect.id === state.streamingArchitectId)?.reference ??
+    state.streamingArchitectId;
 
   const getNextPhase = (): DiscussionPhase | null => {
     if (state.phases.length === 0) return "proposal";
@@ -302,44 +248,6 @@ export function ForumPanel() {
     [handlePrimaryAction]
   );
 
-  const handleDownloadGraph = useCallback(() => {
-    const currentGraph = graph.state.graph;
-    if (!currentGraph) return;
-
-    const createdAt = currentGraph.metadata.created_at
-      .replace(/[:.]/g, "-")
-      .replace("T", "_")
-      .replace("Z", "");
-    triggerJsonDownload(
-      withDisplayColorsInGraph(currentGraph),
-      `spatial_mass_graph_${createdAt}.json`
-    );
-  }, [graph.state.graph]);
-
-  const handleDownloadForumResult = useCallback(async () => {
-    if (!state.sessionId) return;
-
-    try {
-      const response = await fetch(`/api/forum/${state.sessionId}/result`);
-      const data = await response.json();
-      if (!response.ok || !data?.session) {
-        addMessage("system", data?.error ? `Forum result download failed: ${data.error}` : "Forum result download failed.");
-        return;
-      }
-
-      const createdAt = graph.state.graph?.metadata.created_at
-        ?.replace(/[:.]/g, "-")
-        .replace("T", "_")
-        .replace("Z", "") ?? Date.now().toString();
-      triggerJsonDownload(
-        withDisplayColorsInForumResult(data.session),
-        `forum_result_${createdAt}.json`
-      );
-    } catch {
-      addMessage("system", "Forum result download failed.");
-    }
-  }, [state.sessionId, graph.state.graph, addMessage]);
-
   return (
     <div style={containerStyle}>
       <div style={headerStyle}>
@@ -384,10 +292,10 @@ export function ForumPanel() {
         ))}
         {state.status === "streaming" && state.streamingArchitectId && (
           <div style={streamingStyle}>
-            <div style={streamingTitleStyle}>{state.streamingArchitectId}</div>
+            <div style={streamingTitleStyle}>{streamingArchitectName}</div>
             <div style={streamingBodyStyle}>
               {state.currentPhase
-                ? `${PHASE_LABELS[state.currentPhase]} 단계에서 매스 그래프와 서술 메타데이터를 정리하는 중입니다.`
+                ? `${PHASE_LABELS[state.currentPhase]} 단계에서 자신의 판단과 대안을 정리하고 있습니다.`
                 : "건축가 응답을 정리하는 중입니다."}
             </div>
             <div style={streamingMetaStyle}>
@@ -403,21 +311,6 @@ export function ForumPanel() {
             ? "피드백을 보내거나 /command를 실행할 수 있습니다."
             : "브리프를 입력하고 포럼을 실행하세요. 최소 2명의 건축가가 필요합니다."}
         </div>
-        {hasFinalGraph && (
-          <div style={downloadRowStyle}>
-            <button type="button" onClick={handleDownloadGraph} style={downloadButtonStyle}>
-              Download SpatialMassGraph
-            </button>
-            <button
-              type="button"
-              onClick={handleDownloadForumResult}
-              style={downloadButtonStyle}
-              disabled={!state.sessionId}
-            >
-              Download forum_result
-            </button>
-          </div>
-        )}
         <div style={composerRowStyle}>
           <input
             value={input}
@@ -530,29 +423,56 @@ function ArchitectSelector({
 }
 
 function MessageBubble({ message }: { message: ForumMessage }) {
-  const color =
-    message.type === "user"
-      ? "#dce7ff"
-      : message.type === "architect"
-        ? "#d9e7c2"
-        : message.type === "graph"
-          ? "#ffd7a0"
-          : "#8d98a7";
+  const { state } = useForum();
   const phaseLabel = message.phase ? PHASE_LABELS[message.phase] : null;
+  const architectName =
+    message.type === "architect"
+      ? state.architects.find((architect) => architect.id === message.architectId)?.reference ??
+        message.architectId ??
+        "architect"
+      : null;
   const messageLabel =
     message.type === "architect"
-      ? `${message.architectId ?? "architect"}${phaseLabel ? ` · ${phaseLabel}` : ""}`
+      ? `${architectName}${phaseLabel ? ` · ${phaseLabel}` : ""}`
       : message.type === "graph"
         ? `graph synthesis${phaseLabel ? ` · ${phaseLabel}` : ""}`
         : message.type === "phase"
           ? phaseLabel ?? "phase"
           : message.type;
+  const accent =
+    message.type === "user"
+      ? "#7aa6ff"
+      : message.type === "architect"
+        ? "#a5d46f"
+        : message.type === "graph"
+          ? "#ffbd6d"
+          : message.type === "phase"
+            ? "#cda9ff"
+            : "#7b8aa3";
+  const bubbleStyle =
+    message.type === "user"
+      ? userBubbleStyle
+      : message.type === "architect"
+        ? architectBubbleStyle
+        : message.type === "graph"
+          ? graphBubbleStyle
+          : message.type === "phase"
+            ? phaseBubbleStyle
+            : systemBubbleStyle;
+  const wrapperStyle =
+    message.type === "user"
+      ? userBubbleWrapStyle
+      : message.type === "architect"
+        ? architectBubbleWrapStyle
+        : neutralBubbleWrapStyle;
 
   return (
-    <div style={{ marginBottom: 10 }}>
-      <div style={{ color: "#596273", fontSize: 9, marginBottom: 4 }}>{messageLabel}</div>
-      <div style={{ color, fontSize: 11, whiteSpace: "pre-wrap", lineHeight: 1.6 }}>
+    <div style={wrapperStyle}>
+      <div style={{ ...bubbleStyle, borderColor: `${accent}44` }}>
+        <div style={{ ...messageMetaStyle, color: accent }}>{messageLabel}</div>
+        <div style={messageBodyStyle}>
         {message.content}
+        </div>
       </div>
     </div>
   );
@@ -653,6 +573,9 @@ const messagesStyle: React.CSSProperties = {
   overflowY: "auto",
   padding: "16px",
   minHeight: 0,
+  display: "flex",
+  flexDirection: "column",
+  gap: 10,
 };
 
 const streamingStyle: React.CSSProperties = {
@@ -660,6 +583,8 @@ const streamingStyle: React.CSSProperties = {
   borderRadius: 10,
   padding: "10px 12px",
   background: "#111520",
+  alignSelf: "flex-start",
+  maxWidth: "92%",
 };
 
 const streamingTitleStyle: React.CSSProperties = {
@@ -774,20 +699,64 @@ const composerButtonStyle: React.CSSProperties = {
   cursor: "pointer",
 };
 
-const downloadButtonStyle: React.CSSProperties = {
-  flex: 1,
-  border: "1px solid #28563a",
-  borderRadius: 8,
-  background: "#10281a",
-  color: "#dff5e7",
-  padding: "10px 12px",
-  fontFamily: "inherit",
-  fontSize: 11,
-  cursor: "pointer",
-  textAlign: "center",
+const neutralBubbleWrapStyle: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "flex-start",
 };
 
-const downloadRowStyle: React.CSSProperties = {
+const architectBubbleWrapStyle: React.CSSProperties = {
   display: "flex",
-  gap: 8,
+  justifyContent: "flex-start",
+};
+
+const userBubbleWrapStyle: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "flex-end",
+};
+
+const baseBubbleStyle: React.CSSProperties = {
+  maxWidth: "92%",
+  border: "1px solid #252a33",
+  borderRadius: 12,
+  padding: "10px 12px",
+  boxShadow: "0 10px 24px rgba(0,0,0,0.16)",
+};
+
+const architectBubbleStyle: React.CSSProperties = {
+  ...baseBubbleStyle,
+  background: "linear-gradient(180deg, rgba(25,34,23,0.96), rgba(17,21,32,0.96))",
+};
+
+const userBubbleStyle: React.CSSProperties = {
+  ...baseBubbleStyle,
+  background: "linear-gradient(180deg, rgba(18,35,67,0.98), rgba(14,23,38,0.98))",
+};
+
+const graphBubbleStyle: React.CSSProperties = {
+  ...baseBubbleStyle,
+  background: "linear-gradient(180deg, rgba(49,35,17,0.96), rgba(19,19,26,0.96))",
+};
+
+const phaseBubbleStyle: React.CSSProperties = {
+  ...baseBubbleStyle,
+  background: "linear-gradient(180deg, rgba(36,29,52,0.96), rgba(18,18,28,0.96))",
+};
+
+const systemBubbleStyle: React.CSSProperties = {
+  ...baseBubbleStyle,
+  background: "linear-gradient(180deg, rgba(21,24,31,0.96), rgba(15,17,24,0.96))",
+};
+
+const messageMetaStyle: React.CSSProperties = {
+  fontSize: 9,
+  marginBottom: 6,
+  textTransform: "uppercase",
+  letterSpacing: 0.8,
+};
+
+const messageBodyStyle: React.CSSProperties = {
+  color: "#e3e8f1",
+  fontSize: 11,
+  whiteSpace: "pre-wrap",
+  lineHeight: 1.65,
 };

@@ -6,15 +6,20 @@ import type {
   MassGeometryProposal,
   MassNodeKind,
   MassPrimitive,
+  MassNodeVariantSpaceProposal,
   MassRelationRule,
+  MassRelationVariantSpaceProposal,
   NodeHierarchy,
+  NumericRange,
   RelativePlacement,
   RelativeProportion,
   RelativeScale,
   SkinTransparency,
   Porosity,
+  StorySpan,
   SpanCharacter,
   SurfaceOrientation,
+  VariantFreedom,
 } from "../forum/types";
 
 export const SCALE_ORDER: RelativeScale[] = ["xs", "small", "medium", "large", "xl"];
@@ -30,7 +35,116 @@ export const DEFAULT_GEOMETRY: MassGeometryProposal = {
   vertical_placement: "mid",
   span_character: "single",
   orientation: "orthogonal",
+  story_count: null,
+  floor_to_floor_m: null,
+  target_gfa_m2: null,
+  height_m: null,
+  plan_aspect_ratio: null,
+  story_span: {
+    start: null,
+    end: null,
+  },
 };
+
+export const DEFAULT_NODE_VARIANT_SPACE: MassNodeVariantSpaceProposal = {
+  alternative_primitives: [],
+  aspect_ratio_range: { min: 1, max: 1 },
+  footprint_scale_range: { min: 1, max: 1 },
+  height_scale_range: { min: 1, max: 1 },
+  radial_distance_scale_range: { min: 1, max: 1 },
+  angle_jitter_deg: 0,
+  freedom: "fixed",
+};
+
+export const DEFAULT_RELATION_VARIANT_SPACE: MassRelationVariantSpaceProposal = {
+  distance_scale_range: { min: 1, max: 1 },
+  lateral_offset_range_m: { min: 0, max: 0 },
+};
+
+function normalizeStorySpan(span?: Partial<StorySpan>): StorySpan {
+  return {
+    start:
+      typeof span?.start === "number" && Number.isFinite(span.start)
+        ? Math.max(1, Math.round(span.start))
+        : null,
+    end:
+      typeof span?.end === "number" && Number.isFinite(span.end)
+        ? Math.max(1, Math.round(span.end))
+        : null,
+  };
+}
+
+function freedomDefaults(freedom: VariantFreedom): Pick<
+  MassNodeVariantSpaceProposal,
+  | "aspect_ratio_range"
+  | "footprint_scale_range"
+  | "height_scale_range"
+  | "radial_distance_scale_range"
+  | "angle_jitter_deg"
+> {
+  if (freedom === "exploratory") {
+    return {
+      aspect_ratio_range: { min: 0.7, max: 1.45 },
+      footprint_scale_range: { min: 0.8, max: 1.28 },
+      height_scale_range: { min: 0.82, max: 1.24 },
+      radial_distance_scale_range: { min: 0.72, max: 1.4 },
+      angle_jitter_deg: 34,
+    };
+  }
+
+  if (freedom === "guided") {
+    return {
+      aspect_ratio_range: { min: 0.85, max: 1.2 },
+      footprint_scale_range: { min: 0.9, max: 1.14 },
+      height_scale_range: { min: 0.9, max: 1.12 },
+      radial_distance_scale_range: { min: 0.88, max: 1.18 },
+      angle_jitter_deg: 18,
+    };
+  }
+
+  return {
+    aspect_ratio_range: DEFAULT_NODE_VARIANT_SPACE.aspect_ratio_range,
+    footprint_scale_range: DEFAULT_NODE_VARIANT_SPACE.footprint_scale_range,
+    height_scale_range: DEFAULT_NODE_VARIANT_SPACE.height_scale_range,
+    radial_distance_scale_range:
+      DEFAULT_NODE_VARIANT_SPACE.radial_distance_scale_range,
+    angle_jitter_deg: DEFAULT_NODE_VARIANT_SPACE.angle_jitter_deg,
+  };
+}
+
+function normalizeNumericRange(
+  range: Partial<NumericRange> | undefined,
+  fallback: NumericRange
+): NumericRange {
+  const fallbackMin =
+    typeof fallback.min === "number" && Number.isFinite(fallback.min)
+      ? fallback.min
+      : null;
+  const fallbackMax =
+    typeof fallback.max === "number" && Number.isFinite(fallback.max)
+      ? fallback.max
+      : null;
+
+  let min =
+    typeof range?.min === "number" && Number.isFinite(range.min) ? range.min : fallbackMin;
+  let max =
+    typeof range?.max === "number" && Number.isFinite(range.max) ? range.max : fallbackMax;
+
+  if (min === null && max !== null) min = max;
+  if (max === null && min !== null) max = min;
+  if (min === null && max === null) {
+    min = fallbackMin ?? 0;
+    max = fallbackMax ?? min;
+  }
+  if (min !== null && max !== null && min > max) {
+    [min, max] = [max, min];
+  }
+
+  return {
+    min,
+    max,
+  };
+}
 
 const INVERSE_RULES: Record<MassRelationRule, MassRelationRule> = {
   above: "below",
@@ -124,6 +238,86 @@ export function ensureGeometry(
       (geometry?.span_character as SpanCharacter) ?? DEFAULT_GEOMETRY.span_character,
     orientation:
       (geometry?.orientation as SurfaceOrientation) ?? DEFAULT_GEOMETRY.orientation,
+    story_count:
+      typeof geometry?.story_count === "number" && Number.isFinite(geometry.story_count)
+        ? Math.max(1, Math.round(geometry.story_count))
+        : DEFAULT_GEOMETRY.story_count,
+    floor_to_floor_m:
+      typeof geometry?.floor_to_floor_m === "number" && Number.isFinite(geometry.floor_to_floor_m)
+        ? Math.max(0.1, geometry.floor_to_floor_m)
+        : DEFAULT_GEOMETRY.floor_to_floor_m,
+    target_gfa_m2:
+      typeof geometry?.target_gfa_m2 === "number" && Number.isFinite(geometry.target_gfa_m2)
+        ? Math.max(0, geometry.target_gfa_m2)
+        : DEFAULT_GEOMETRY.target_gfa_m2,
+    height_m:
+      typeof geometry?.height_m === "number" && Number.isFinite(geometry.height_m)
+        ? Math.max(0.1, geometry.height_m)
+        : DEFAULT_GEOMETRY.height_m,
+    plan_aspect_ratio:
+      typeof geometry?.plan_aspect_ratio === "number" &&
+      Number.isFinite(geometry.plan_aspect_ratio)
+        ? Math.max(0.2, geometry.plan_aspect_ratio)
+        : DEFAULT_GEOMETRY.plan_aspect_ratio,
+    story_span: normalizeStorySpan(geometry?.story_span),
+  };
+}
+
+export function ensureNodeVariantSpace(
+  variantSpace: Partial<MassNodeVariantSpaceProposal> | undefined,
+  geometry?: Partial<MassGeometryProposal>
+): MassNodeVariantSpaceProposal {
+  const freedom = (variantSpace?.freedom as VariantFreedom) ?? DEFAULT_NODE_VARIANT_SPACE.freedom;
+  const defaults = freedomDefaults(freedom);
+  const basePrimitive = (geometry?.primitive as MassPrimitive) ?? DEFAULT_GEOMETRY.primitive;
+  const alternativePrimitives = Array.from(
+    new Set(
+      [...(variantSpace?.alternative_primitives ?? []), basePrimitive].filter(
+        (value): value is MassPrimitive => Boolean(value)
+      )
+    )
+  );
+
+  return {
+    alternative_primitives:
+      alternativePrimitives.length > 0 ? alternativePrimitives : [basePrimitive],
+    aspect_ratio_range: normalizeNumericRange(
+      variantSpace?.aspect_ratio_range,
+      defaults.aspect_ratio_range
+    ),
+    footprint_scale_range: normalizeNumericRange(
+      variantSpace?.footprint_scale_range,
+      defaults.footprint_scale_range
+    ),
+    height_scale_range: normalizeNumericRange(
+      variantSpace?.height_scale_range,
+      defaults.height_scale_range
+    ),
+    radial_distance_scale_range: normalizeNumericRange(
+      variantSpace?.radial_distance_scale_range,
+      defaults.radial_distance_scale_range
+    ),
+    angle_jitter_deg:
+      typeof variantSpace?.angle_jitter_deg === "number" &&
+      Number.isFinite(variantSpace.angle_jitter_deg)
+        ? Math.max(0, variantSpace.angle_jitter_deg)
+        : defaults.angle_jitter_deg,
+    freedom,
+  };
+}
+
+export function ensureRelationVariantSpace(
+  variantSpace?: Partial<MassRelationVariantSpaceProposal>
+): MassRelationVariantSpaceProposal {
+  return {
+    distance_scale_range: normalizeNumericRange(
+      variantSpace?.distance_scale_range,
+      DEFAULT_RELATION_VARIANT_SPACE.distance_scale_range
+    ),
+    lateral_offset_range_m: normalizeNumericRange(
+      variantSpace?.lateral_offset_range_m,
+      DEFAULT_RELATION_VARIANT_SPACE.lateral_offset_range_m
+    ),
   };
 }
 

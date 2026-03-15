@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import * as path from "path";
 import * as fs from "fs";
-import { buildGraphFromForumResult } from "@gim/core";
-import { withResolvedMassModel } from "@gim/core/graph/resolved-model";
+import { buildGraphFromForumResult, withResolvedMassModel } from "@gim/core";
 
 const FORUM_OUTPUT_DIR = path.resolve(process.cwd(), "../../forum_results");
 const GRAPH_OUTPUT_DIR = path.resolve(process.cwd(), "../../graph_output");

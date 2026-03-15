@@ -1,6 +1,12 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef } from "react";
+import React, {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+} from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { OBJExporter } from "three/addons/exporters/OBJExporter.js";
@@ -525,19 +531,16 @@ function updateOrthographicCamera(
   camera.updateProjectionMatrix();
 }
 
-function frameMassGroup(
+function frameOrthographicGroup(
   camera: THREE.OrthographicCamera,
-  controls: OrbitControls,
   group: THREE.Group
 ) {
   const box = new THREE.Box3().setFromObject(group);
   if (box.isEmpty()) {
-    controls.target.set(0, 10, 0);
     camera.position.copy(CAMERA_OFFSET);
     camera.zoom = 1;
     camera.updateProjectionMatrix();
-    controls.update();
-    return;
+    return new THREE.Vector3(0, 10, 0);
   }
 
   const center = box.getCenter(new THREE.Vector3());
@@ -551,10 +554,19 @@ function frameMassGroup(
     30
   );
 
-  controls.target.copy(center);
   camera.position.copy(center.clone().add(CAMERA_OFFSET));
   camera.zoom = Math.min(3.4, Math.max(0.65, ORTHO_VIEW_HEIGHT / requiredHeight));
   camera.updateProjectionMatrix();
+  return center;
+}
+
+function frameMassGroup(
+  camera: THREE.OrthographicCamera,
+  controls: OrbitControls,
+  group: THREE.Group
+) {
+  const center = frameOrthographicGroup(camera, group);
+  controls.target.copy(center);
   controls.update();
 }
 
@@ -576,6 +588,106 @@ function triggerDownload(contents: BlobPart, filename: string, type: string) {
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
+}
+
+function disposeMaterial(material: THREE.Material | THREE.Material[]) {
+  const materials = Array.isArray(material) ? material : [material];
+  for (const item of materials) {
+    item.dispose();
+  }
+}
+
+function captureMonochromeRender(
+  graph: SpatialMassGraph,
+  sourceCamera?: THREE.OrthographicCamera,
+  sourceSize?: { width: number; height: number }
+): string | null {
+  const renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    alpha: false,
+    preserveDrawingBuffer: true,
+  });
+
+  try {
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xe7e4de);
+
+    const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 1200);
+    const renderWidth = Math.max(Math.round(sourceSize?.width ?? 1024), 512);
+    const renderHeight = Math.max(Math.round(sourceSize?.height ?? 1024), 512);
+    updateOrthographicCamera(camera, renderWidth, renderHeight);
+
+    renderer.setSize(renderWidth, renderHeight);
+    renderer.setPixelRatio(1);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.92));
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x111827, 0.38));
+    const keyLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    keyLight.position.set(48, 64, 38);
+    scene.add(keyLight);
+    const fillLight = new THREE.DirectionalLight(0xffffff, 0.32);
+    fillLight.position.set(-24, 32, -18);
+    scene.add(fillLight);
+
+    const built = buildMassScene(graph);
+    built.overlayGroup.visible = false;
+
+    built.massGroup.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return;
+      disposeMaterial(object.material);
+      object.material = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        transparent: false,
+        opacity: 1,
+        roughness: 0.68,
+        metalness: 0.02,
+      });
+      object.castShadow = false;
+      object.receiveShadow = false;
+    });
+
+    built.massGroup.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return;
+      const edges = new THREE.EdgesGeometry(object.geometry);
+      const lines = new THREE.LineSegments(
+        edges,
+        new THREE.LineBasicMaterial({
+          color: 0x71706a,
+          transparent: true,
+          opacity: 0.9,
+        })
+      );
+      lines.renderOrder = 2;
+      object.add(lines);
+    });
+
+    scene.add(built.massGroup);
+    if (sourceCamera) {
+      camera.position.copy(sourceCamera.position);
+      camera.quaternion.copy(sourceCamera.quaternion);
+      camera.zoom = sourceCamera.zoom;
+      camera.near = sourceCamera.near;
+      camera.far = sourceCamera.far;
+      camera.updateProjectionMatrix();
+    } else {
+      frameOrthographicGroup(camera, built.massGroup);
+    }
+    renderer.render(scene, camera);
+
+    const dataUrl = renderer.domElement.toDataURL("image/png");
+    scene.remove(built.massGroup);
+    scene.remove(built.overlayGroup);
+    disposeGroup(built.massGroup);
+    disposeGroup(built.overlayGroup);
+    return dataUrl;
+  } catch {
+    return null;
+  } finally {
+    renderer.dispose();
+    if ("forceContextLoss" in renderer) {
+      renderer.forceContextLoss();
+    }
+  }
 }
 
 function applyVisualState(
@@ -640,7 +752,14 @@ function applyVisualState(
   }
 }
 
-export function MassViewer3D() {
+export interface MassViewer3DHandle {
+  captureMonochromeCurrentView: () => string | null;
+}
+
+export const MassViewer3D = forwardRef<MassViewer3DHandle>(function MassViewer3D(
+  _props,
+  ref
+) {
   const containerRef = useRef<HTMLDivElement>(null);
   const selectionRef = useRef<{
     selectedNodeId: string | null;
@@ -666,12 +785,28 @@ export function MassViewer3D() {
     variantHistory,
     activeVariantId,
     regenerateVariant,
-    activateVariant,
     setVariantPreview,
   } = useGraph();
   const { graph, selectedNodeId } = state;
   const activeVariant =
     variantHistory.find((variant) => variant.id === activeVariantId) ?? null;
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      captureMonochromeCurrentView: () => {
+        if (!graph) return null;
+        const scene = sceneRef.current;
+        if (!scene) return captureMonochromeRender(graph);
+        const size = scene.renderer.getSize(new THREE.Vector2());
+        return captureMonochromeRender(graph, scene.camera, {
+          width: size.x,
+          height: size.y,
+        });
+      },
+    }),
+    [graph]
+  );
 
   const connectedIds = useMemo(() => {
     if (!graph || !selectedNodeId) return new Set<string>();
@@ -927,46 +1062,9 @@ export function MassViewer3D() {
         </div>
         <div ref={containerRef} style={canvasStyle} />
       </div>
-      <div style={snapshotRailStyle}>
-        <div style={snapshotRailHeaderStyle}>
-          <span style={snapshotRailTitleStyle}>Variant Snapshots</span>
-          <span style={snapshotRailMetaStyle}>{variantHistory.length} saved</span>
-        </div>
-        <div style={snapshotListStyle}>
-          {variantHistory.map((variant) => {
-            const active = variant.id === activeVariantId;
-            return (
-              <button
-                key={variant.id}
-                type="button"
-                onClick={() => activateVariant(variant.id)}
-                style={{
-                  ...snapshotButtonStyle,
-                  borderColor: active ? "#dce7ff" : "#2a3445",
-                  boxShadow: active ? "0 0 0 1px rgba(220,231,255,0.24)" : "none",
-                }}
-              >
-                {variant.previewDataUrl ? (
-                  <img
-                    src={variant.previewDataUrl}
-                    alt={variant.label}
-                    style={snapshotImageStyle}
-                  />
-                ) : (
-                  <div style={snapshotPlaceholderStyle}>{variant.label}</div>
-                )}
-                <div style={snapshotCaptionStyle}>
-                  <span style={{ color: active ? "#f4f7ff" : "#dce7ff" }}>{variant.label}</span>
-                  <span style={{ color: "#74839b" }}>seed {variant.seed}</span>
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
     </div>
   );
-}
+});
 
 const viewerShellStyle: React.CSSProperties = {
   width: "100%",
@@ -1017,80 +1115,4 @@ const exportButtonStyle: React.CSSProperties = {
 const canvasStyle: React.CSSProperties = {
   width: "100%",
   height: "100%",
-};
-
-const snapshotRailStyle: React.CSSProperties = {
-  borderTop: "1px solid #1a1a2e",
-  background: "#0d0d15",
-  padding: "10px 12px 12px",
-  display: "flex",
-  flexDirection: "column",
-  gap: 8,
-};
-
-const snapshotRailHeaderStyle: React.CSSProperties = {
-  display: "flex",
-  justifyContent: "space-between",
-  alignItems: "center",
-};
-
-const snapshotRailTitleStyle: React.CSSProperties = {
-  color: "#93a4bc",
-  fontSize: 10,
-  textTransform: "uppercase",
-  letterSpacing: 1,
-};
-
-const snapshotRailMetaStyle: React.CSSProperties = {
-  color: "#667085",
-  fontSize: 10,
-};
-
-const snapshotListStyle: React.CSSProperties = {
-  display: "flex",
-  gap: 10,
-  overflowX: "auto",
-  paddingBottom: 2,
-};
-
-const snapshotButtonStyle: React.CSSProperties = {
-  minWidth: 110,
-  width: 110,
-  borderRadius: 10,
-  border: "1px solid #2a3445",
-  background: "#111520",
-  overflow: "hidden",
-  padding: 0,
-  cursor: "pointer",
-  textAlign: "left",
-  fontFamily: "inherit",
-  flexShrink: 0,
-};
-
-const snapshotImageStyle: React.CSSProperties = {
-  width: "100%",
-  height: 72,
-  objectFit: "cover",
-  display: "block",
-  background: "#08101a",
-};
-
-const snapshotPlaceholderStyle: React.CSSProperties = {
-  width: "100%",
-  height: 72,
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  background:
-    "linear-gradient(135deg, rgba(64,94,132,0.42), rgba(16,22,34,0.9))",
-  color: "#dce7ff",
-  fontSize: 11,
-};
-
-const snapshotCaptionStyle: React.CSSProperties = {
-  display: "flex",
-  flexDirection: "column",
-  gap: 2,
-  padding: "8px 10px",
-  fontSize: 10,
 };

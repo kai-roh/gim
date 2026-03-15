@@ -43,6 +43,7 @@ const RELATIVE_PLACEMENT = [
 ] as const;
 const SPAN_CHARACTER = ["single", "stacked", "multi_level"] as const;
 const SURFACE_ORIENTATION = ["orthogonal", "diagonal", "curved", "radial"] as const;
+const VARIANT_FREEDOM = ["fixed", "guided", "exploratory"] as const;
 const MASS_RELATION_FAMILY = [
   "stack",
   "contact",
@@ -125,6 +126,7 @@ const ARCHITECT_RESPONSE_TOOL: Anthropic.Tool = {
                 "hierarchy",
                 "spatial_role",
                 "geometry",
+                "variant_space",
                 "relative_position",
                 "narrative",
                 "architect_influences",
@@ -148,6 +150,12 @@ const ARCHITECT_RESPONSE_TOOL: Anthropic.Tool = {
                     "vertical_placement",
                     "span_character",
                     "orientation",
+                    "story_count",
+                    "floor_to_floor_m",
+                    "target_gfa_m2",
+                    "height_m",
+                    "plan_aspect_ratio",
+                    "story_span",
                   ],
                   properties: {
                     primitive: { type: "string" as const, enum: [...MASS_PRIMITIVE] },
@@ -160,6 +168,77 @@ const ARCHITECT_RESPONSE_TOOL: Anthropic.Tool = {
                     vertical_placement: { type: "string" as const, enum: [...RELATIVE_PLACEMENT] },
                     span_character: { type: "string" as const, enum: [...SPAN_CHARACTER] },
                     orientation: { type: "string" as const, enum: [...SURFACE_ORIENTATION] },
+                    story_count: { type: ["integer", "null"] as const, minimum: 1 },
+                    floor_to_floor_m: { type: ["number", "null"] as const, minimum: 0.1 },
+                    target_gfa_m2: { type: ["number", "null"] as const, minimum: 0 },
+                    height_m: { type: ["number", "null"] as const, minimum: 0.1 },
+                    plan_aspect_ratio: { type: ["number", "null"] as const, minimum: 0.2 },
+                    story_span: {
+                      type: "object" as const,
+                      additionalProperties: false,
+                      required: ["start", "end"],
+                      properties: {
+                        start: { type: ["integer", "null"] as const, minimum: 1 },
+                        end: { type: ["integer", "null"] as const, minimum: 1 },
+                      },
+                    },
+                  },
+                },
+                variant_space: {
+                  type: "object" as const,
+                  additionalProperties: false,
+                  required: [
+                    "alternative_primitives",
+                    "aspect_ratio_range",
+                    "footprint_scale_range",
+                    "height_scale_range",
+                    "radial_distance_scale_range",
+                    "angle_jitter_deg",
+                    "freedom",
+                  ],
+                  properties: {
+                    alternative_primitives: {
+                      type: "array" as const,
+                      items: { type: "string" as const, enum: [...MASS_PRIMITIVE] },
+                    },
+                    aspect_ratio_range: {
+                      type: "object" as const,
+                      additionalProperties: false,
+                      required: ["min", "max"],
+                      properties: {
+                        min: { type: ["number", "null"] as const, minimum: 0.2 },
+                        max: { type: ["number", "null"] as const, minimum: 0.2 },
+                      },
+                    },
+                    footprint_scale_range: {
+                      type: "object" as const,
+                      additionalProperties: false,
+                      required: ["min", "max"],
+                      properties: {
+                        min: { type: ["number", "null"] as const, minimum: 0.3 },
+                        max: { type: ["number", "null"] as const, minimum: 0.3 },
+                      },
+                    },
+                    height_scale_range: {
+                      type: "object" as const,
+                      additionalProperties: false,
+                      required: ["min", "max"],
+                      properties: {
+                        min: { type: ["number", "null"] as const, minimum: 0.3 },
+                        max: { type: ["number", "null"] as const, minimum: 0.3 },
+                      },
+                    },
+                    radial_distance_scale_range: {
+                      type: "object" as const,
+                      additionalProperties: false,
+                      required: ["min", "max"],
+                      properties: {
+                        min: { type: ["number", "null"] as const, minimum: 0 },
+                        max: { type: ["number", "null"] as const, minimum: 0 },
+                      },
+                    },
+                    angle_jitter_deg: { type: ["number", "null"] as const, minimum: 0 },
+                    freedom: { type: "string" as const, enum: [...VARIANT_FREEDOM] },
                   },
                 },
                 relative_position: {
@@ -220,18 +299,44 @@ const ARCHITECT_RESPONSE_TOOL: Anthropic.Tool = {
                 "weight",
                 "rationale",
                 "geometry_effect",
+                "variant_space",
               ],
               properties: {
                 source_id: { type: "string" as const },
                 target_id: { type: "string" as const },
                 family: { type: "string" as const, enum: [...MASS_RELATION_FAMILY] },
                 rule: { type: "string" as const, enum: [...MASS_RELATION_RULE] },
-                strength: { type: "string" as const, enum: ["hard", "soft"] },
+                strength: { type: "string" as const, enum: ["hard", "soft"] as const },
                 weight: { type: "number" as const },
                 rationale: { type: "string" as const },
                 geometry_effect: {
                   type: ["string", "null"] as const,
                   enum: [...GEOMETRY_EFFECT, null],
+                },
+                variant_space: {
+                  type: "object" as const,
+                  additionalProperties: false,
+                  required: ["distance_scale_range", "lateral_offset_range_m"],
+                  properties: {
+                    distance_scale_range: {
+                      type: "object" as const,
+                      additionalProperties: false,
+                      required: ["min", "max"],
+                      properties: {
+                        min: { type: ["number", "null"] as const, minimum: 0 },
+                        max: { type: ["number", "null"] as const, minimum: 0 },
+                      },
+                    },
+                    lateral_offset_range_m: {
+                      type: "object" as const,
+                      additionalProperties: false,
+                      required: ["min", "max"],
+                      properties: {
+                        min: { type: ["number", "null"] as const, minimum: 0 },
+                        max: { type: ["number", "null"] as const, minimum: 0 },
+                      },
+                    },
+                  },
                 },
               },
             },
@@ -277,45 +382,98 @@ const ARCHITECT_RESPONSE_TOOL: Anthropic.Tool = {
 };
 
 export function buildContextPrompt(context: ProjectContext): string {
-  const companySection = context.company
+  const siteContextEntries = [
+    ["북측", context.site.context.north],
+    ["남측", context.site.context.south],
+    ["동측", context.site.context.east],
+    ["서측", context.site.context.west],
+  ].filter(([, value]) => Boolean(value?.trim()));
+
+  const siteLines = [
+    context.site.location ? `**위치**: ${context.site.location}` : null,
+    context.site.dimensions[0] > 0 && context.site.dimensions[1] > 0
+      ? `**대지 크기**: ${context.site.dimensions[0]}m × ${context.site.dimensions[1]}m`
+      : null,
+    context.site.far > 0 ? `**용적률**: ${context.site.far}%` : null,
+    context.site.bcr > 0 ? `**건폐율**: ${context.site.bcr}%` : null,
+    context.site.height_limit > 0 ? `**높이 제한**: ${context.site.height_limit}m` : null,
+  ].filter(Boolean);
+
+  const companySection =
+    context.company &&
+    (context.company.name ||
+      context.company.brand_philosophy ||
+      context.company.identity_keywords.length > 0)
     ? `
 **기업 정보**
-- 기업명: ${context.company.name}
-- 브랜드 철학: ${context.company.brand_philosophy}
-- 정체성 키워드: ${context.company.identity_keywords.join(", ")}
+- 기업명: ${context.company.name || "미입력"}
+- 브랜드 철학: ${context.company.brand_philosophy || "미입력"}
+- 정체성 키워드: ${
+        context.company.identity_keywords.length > 0
+          ? context.company.identity_keywords.join(", ")
+          : "미입력"
+      }
 `
     : "";
+
+  const siteSection = siteLines.length > 0 ? `${siteLines.join("\n")}\n` : "";
+  const surroundingContextSection =
+    siteContextEntries.length > 0
+      ? `
+**주변 맥락**
+${siteContextEntries.map(([label, value]) => `- ${label}: ${value}`).join("\n")}
+`
+      : "";
+  const programSection =
+    context.program.total_gfa > 0 || context.program.uses.length > 0
+      ? `
+**프로그램 요구**
+${[
+  context.program.total_gfa > 0 ? `- 총 연면적 목표: ${context.program.total_gfa.toLocaleString("ko-KR")} m²` : null,
+  ...context.program.uses.map(
+    (u) => `- ${u.type}: ${(u.ratio * 100).toFixed(0)}% — ${u.requirements || ""}`
+  ),
+]
+  .filter(Boolean)
+  .join("\n")}
+`
+      : "";
+  const constraintsSection =
+    context.constraints.length > 0
+      ? `
+**핵심 조건**
+${context.constraints.map((c) => `- ${c}`).join("\n")}
+`
+      : "";
+  const clientVisionSection = context.client_vision
+    ? `**클라이언트 비전**: ${context.client_vision}\n`
+    : "";
+  const explicitInputNotice =
+    !companySection &&
+    !siteSection &&
+    !surroundingContextSection &&
+    !programSection &&
+    !constraintsSection &&
+    !clientVisionSection
+      ? `
+**명시된 프로젝트 정보**
+- 아직 구체적인 브랜드/부지/프로그램 정보가 제공되지 않았습니다.
+- 사용자가 직접 적은 내용만 근거로 판단하고, 비어 있는 항목은 임의의 브랜드나 사이트 사례로 채우지 마세요.
+`
+      : "";
 
   return `
 ## 프로젝트 컨텍스트
 ${companySection}
-**위치**: ${context.site.location}
-**대지 크기**: ${context.site.dimensions[0]}m × ${context.site.dimensions[1]}m
-**용적률**: ${context.site.far}%
-**건폐율**: ${context.site.bcr}%
-**높이 제한**: ${context.site.height_limit}m
-
-**주변 맥락**
-- 북측: ${context.site.context.north}
-- 남측: ${context.site.context.south}
-- 동측: ${context.site.context.east}
-- 서측: ${context.site.context.west}
-
-**프로그램 요구**
-${context.program.uses
-  .map((u) => `- ${u.type}: ${(u.ratio * 100).toFixed(0)}% — ${u.requirements || ""}`)
-  .join("\n")}
-
-**핵심 조건**
-${context.constraints.map((c) => `- ${c}`).join("\n")}
-
-**클라이언트 비전**: ${context.client_vision || ""}
+${siteSection}${surroundingContextSection}${programSection}${constraintsSection}${clientVisionSection}${explicitInputNotice}
 
 ## 설계 방식
 - 층별 프로그램표를 직접 만드는 것이 아니라, 건축적 덩어리와 void, core, connector의 관계 그래프를 제안합니다.
 - 절대 좌표보다 상대 관계를 우선합니다.
+- 대신 노드별 규모를 실제로 해석할 수 있도록 story_count, floor_to_floor_m, target_gfa_m2, story_span 같은 정량 정보를 적극 사용합니다.
 - 노드는 6~12개 주요 덩어리 수준으로 압축합니다.
 - 이미지 생성에 쓸 전체 서술과 노드별 설명을 함께 남깁니다.
+- 사용자가 주지 않은 특정 브랜드, 사이트, 레퍼런스 사례를 임의로 끌어오지 않습니다.
 `;
 }
 
@@ -325,7 +483,7 @@ function summarizeResponse(response: ArchitectResponse): string {
     .map(
       (node) =>
         `- ${node.id}: ${node.kind}/${node.hierarchy}, ${node.spatial_role}, ` +
-        `${node.geometry.primitive}, ${node.geometry.vertical_placement}, ${node.narrative.intent}`
+        `${node.geometry.primitive}, ${node.geometry.vertical_placement}, ${node.geometry.story_count ?? "?"} stories, ${node.narrative.intent}`
     )
     .join("\n");
 
@@ -364,7 +522,7 @@ export function buildPhasePrompt(
 중요한 지침:
 - 층별 수직 조닝표를 만들지 마세요.
 - 공간 덩어리, void, core, connector를 노드로 정의하세요.
-- 상대 관계와 범주형 기하 정보만 사용하세요.
+- 절대 좌표는 피하되, story_count, floor_to_floor_m, target_gfa_m2, story_span 같은 정량 정보는 적극 사용하세요.
 - 이미지 생성에 활용될 전체 서술과 노드 설명을 반드시 작성하세요.
 `;
   }
@@ -383,6 +541,7 @@ ${others}
 - 어떤 노드가 과도하거나 부족한지 지적하세요.
 - 관계가 불충분하거나 모호한 부분을 짚으세요.
 - 필요하면 자신의 노드 ID와 관계를 정리하여 수정하세요.
+- 가능한 경우 노드의 층수, 층고, 점유 스팬, 목표 면적을 더 명확히 하세요.
 - 최종적으로 더 일관된 매스 그래프로 다듬으세요.
 `;
   }
@@ -401,8 +560,8 @@ ${others}
 
 반드시 지킬 것:
 - 서로 다른 제안에서 공통 핵심 노드를 정리하여 ID를 안정화하세요.
-        - 관계는 중앙 3D 모델 해석기가 일관되게 해석할 수 있도록 명확하게 유지하세요.
-- 건축 아이디어는 narrative에 풍부하게 남기되, 기하 정보는 간결하게 유지하세요.
+- 관계는 중앙 3D 모델 해석기가 일관되게 해석할 수 있도록 명확하게 유지하세요.
+- 건축 아이디어는 narrative에 풍부하게 남기되, 기하 정보에는 story_count, floor_to_floor_m, target_gfa_m2, story_span을 포함해 실제 볼륨을 만들 수 있게 하세요.
 - 어떤 건축가의 영향이 각 노드에 남았는지 architect_influences에 반영하세요.
 - 프로젝트 소개와 이미지 생성용 설명을 충분히 작성하세요.
 `;

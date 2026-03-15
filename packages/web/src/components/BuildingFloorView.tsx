@@ -70,6 +70,7 @@ export function BuildingFloorView() {
       properties: {
         ...node.properties,
         display_color: massColor(node.id),
+        display_color_hex: massColor(node.id),
       },
     })),
   });
@@ -90,6 +91,7 @@ export function BuildingFloorView() {
                         properties: {
                           ...(node.properties ?? {}),
                           display_color: massColor(node.id),
+                          display_color_hex: massColor(node.id),
                         },
                       }))
                     : response?.proposal?.mass_entities,
