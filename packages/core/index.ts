@@ -36,6 +36,7 @@ export type {
   NodeHierarchy,
   MassPrimitive,
   RelativeScale,
+  StorySpan,
   RelativeProportion,
   SkinTransparency,
   Porosity,
@@ -43,12 +44,16 @@ export type {
   SpanCharacter,
   SurfaceOrientation,
   MassGeometryProposal,
+  MassNodeVariantSpaceProposal,
   MassNarrativeProposal,
   MassNodeProposal,
   MassRelationFamily,
   MassRelationRule,
+  MassRelationVariantSpaceProposal,
   MassRelationProposal,
   DesignNarrativeProposal,
+  NumericRange,
+  VariantFreedom,
 } from "./forum/types";
 
 export type {
@@ -94,6 +99,12 @@ export {
 } from "./graph/operations";
 
 export {
+  displayColorForNodeId,
+  withNodeDisplayColors,
+  withDisplayColors,
+} from "./graph/colors";
+
+export {
   evaluateGraph,
   relationClarity,
   geometryReadiness,
@@ -109,6 +120,8 @@ export type { EvaluationResult, EvaluationIssue } from "./graph/evaluation";
 export {
   SCALE_ORDER,
   DEFAULT_GEOMETRY,
+  DEFAULT_NODE_VARIANT_SPACE,
+  DEFAULT_RELATION_VARIANT_SPACE,
   inverseRuleFor,
   normalizeId,
   clampInfluence,
@@ -117,5 +130,7 @@ export {
   average,
   mergeKeywords,
   ensureGeometry,
+  ensureNodeVariantSpace,
+  ensureRelationVariantSpace,
   defaultNodeName,
 } from "./graph/rules";

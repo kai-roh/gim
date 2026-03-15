@@ -26,6 +26,8 @@ import {
   clampInfluence,
   defaultNodeName,
   ensureGeometry,
+  ensureNodeVariantSpace,
+  ensureRelationVariantSpace,
   inverseRuleFor,
   mergeKeywords,
   normalizeId,
@@ -81,9 +83,174 @@ function collectNodeVotes(responses: ArchitectResponse[]): Map<string, NodeVote[
   return groups;
 }
 
+function roundMetric(value: number, digits = 2): number {
+  const scale = 10 ** digits;
+  return Math.round(value * scale) / scale;
+}
+
+function averageMetric(
+  values: Array<number | null | undefined>,
+  digits = 2
+): number | null {
+  const valid = values.filter(
+    (value): value is number => typeof value === "number" && Number.isFinite(value)
+  );
+  if (valid.length === 0) return null;
+  return roundMetric(average(valid, 0), digits);
+}
+
+function averageIntegerMetric(values: Array<number | null | undefined>): number | null {
+  const averaged = averageMetric(values, 0);
+  return averaged === null ? null : Math.max(1, Math.round(averaged));
+}
+
+function mergeNumericRange(
+  values: Array<{ min: number | null; max: number | null }>
+): { min: number | null; max: number | null } {
+  const mins = values
+    .map((value) => value.min)
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const maxs = values
+    .map((value) => value.max)
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+
+  return {
+    min: mins.length > 0 ? Math.min(...mins) : null,
+    max: maxs.length > 0 ? Math.max(...maxs) : null,
+  };
+}
+
+function normalizeStorySpan(
+  span?: MassNodeProposal["geometry"]["story_span"]
+): MassNodeProposal["geometry"]["story_span"] {
+  const start =
+    typeof span?.start === "number" && Number.isFinite(span.start)
+      ? Math.max(1, Math.round(span.start))
+      : null;
+  const end =
+    typeof span?.end === "number" && Number.isFinite(span.end)
+      ? Math.max(1, Math.round(span.end))
+      : null;
+
+  if (start !== null && end !== null && start > end) {
+    return { start: end, end: start };
+  }
+
+  return { start, end };
+}
+
+function nonNullMetricCount(node: MassNodeProposal): number {
+  const metrics = [
+    node.geometry.story_count,
+    node.geometry.floor_to_floor_m,
+    node.geometry.target_gfa_m2,
+    node.geometry.height_m,
+    node.geometry.plan_aspect_ratio,
+    node.geometry.story_span.start,
+    node.geometry.story_span.end,
+  ];
+  return metrics.filter((value) => typeof value === "number" && Number.isFinite(value)).length;
+}
+
+function selectRepresentativeNodeSample(nodeSamples: MassNodeProposal[]): MassNodeProposal {
+  const modal = {
+    kind: pickMostCommon(
+      nodeSamples.map((sample) => sample.kind),
+      nodeSamples[0].kind
+    ),
+    hierarchy: pickMostCommon(
+      nodeSamples.map((sample) => sample.hierarchy),
+      nodeSamples[0].hierarchy
+    ),
+    primitive: pickMostCommon(
+      nodeSamples.map((sample) => sample.geometry.primitive),
+      nodeSamples[0].geometry.primitive
+    ),
+    width: pickMostCommon(
+      nodeSamples.map((sample) => sample.geometry.width),
+      nodeSamples[0].geometry.width
+    ),
+    depth: pickMostCommon(
+      nodeSamples.map((sample) => sample.geometry.depth),
+      nodeSamples[0].geometry.depth
+    ),
+    height: pickMostCommon(
+      nodeSamples.map((sample) => sample.geometry.height),
+      nodeSamples[0].geometry.height
+    ),
+    proportion: pickMostCommon(
+      nodeSamples.map((sample) => sample.geometry.proportion),
+      nodeSamples[0].geometry.proportion
+    ),
+    vertical_placement: pickMostCommon(
+      nodeSamples.map((sample) => sample.geometry.vertical_placement),
+      nodeSamples[0].geometry.vertical_placement
+    ),
+    span_character: pickMostCommon(
+      nodeSamples.map((sample) => sample.geometry.span_character),
+      nodeSamples[0].geometry.span_character
+    ),
+    orientation: pickMostCommon(
+      nodeSamples.map((sample) => sample.geometry.orientation),
+      nodeSamples[0].geometry.orientation
+    ),
+  };
+
+  return [...nodeSamples].sort((left, right) => {
+    const score = (sample: MassNodeProposal) =>
+      (sample.kind === modal.kind ? 2 : 0) +
+      (sample.hierarchy === modal.hierarchy ? 2 : 0) +
+      (sample.geometry.primitive === modal.primitive ? 4 : 0) +
+      (sample.geometry.width === modal.width ? 1 : 0) +
+      (sample.geometry.depth === modal.depth ? 1 : 0) +
+      (sample.geometry.height === modal.height ? 1 : 0) +
+      (sample.geometry.proportion === modal.proportion ? 2 : 0) +
+      (sample.geometry.vertical_placement === modal.vertical_placement ? 2 : 0) +
+      (sample.geometry.span_character === modal.span_character ? 2 : 0) +
+      (sample.geometry.orientation === modal.orientation ? 1 : 0) +
+      nonNullMetricCount(sample);
+
+    const delta = score(right) - score(left);
+    if (delta !== 0) return delta;
+    return right.narrative.intent.length - left.narrative.intent.length;
+  })[0];
+}
+
+function mergeStorySpan(
+  nodeSamples: MassNodeProposal[],
+  storyCount: number | null,
+  fallback: MassNodeProposal["geometry"]["story_span"]
+): MassNodeProposal["geometry"]["story_span"] {
+  const starts = nodeSamples.map((sample) => sample.geometry.story_span.start);
+  const ends = nodeSamples.map((sample) => sample.geometry.story_span.end);
+
+  let start = averageIntegerMetric(starts);
+  let end = averageIntegerMetric(ends);
+
+  if (start === null) start = fallback.start;
+  if (end === null) end = fallback.end;
+
+  if (start !== null && end === null && storyCount !== null) {
+    end = start + storyCount - 1;
+  }
+  if (end !== null && start === null && storyCount !== null) {
+    start = Math.max(1, end - storyCount + 1);
+  }
+
+  return normalizeStorySpan({ start, end });
+}
+
 function mergeNodeGroup(nodeId: string, votes: NodeVote[]): MassNode {
   const nodeSamples = votes.map((vote) => vote.node);
   const first = nodeSamples[0];
+  const representative = selectRepresentativeNodeSample(nodeSamples);
+  const representativeVariantSpace = ensureNodeVariantSpace(
+    representative.variant_space,
+    representative.geometry
+  );
+  const normalizedVariantSpaces = nodeSamples.map((sample) =>
+    ensureNodeVariantSpace(sample.variant_space, sample.geometry)
+  );
 
   const influenceMap = new Map<string, { weightSum: number; count: number; notes: string[] }>();
   for (const vote of votes) {
@@ -156,47 +323,74 @@ function mergeNodeGroup(nodeId: string, votes: NodeVote[]): MassNode {
       first.spatial_role
     ),
     geometry: ensureGeometry({
-      primitive: pickMostCommon(
-        nodeSamples.map((sample) => sample.geometry.primitive),
-        first.geometry.primitive
-      ),
-      width: pickMostCommon(
-        nodeSamples.map((sample) => sample.geometry.width),
-        first.geometry.width
-      ),
-      depth: pickMostCommon(
-        nodeSamples.map((sample) => sample.geometry.depth),
-        first.geometry.depth
-      ),
-      height: pickMostCommon(
-        nodeSamples.map((sample) => sample.geometry.height),
-        first.geometry.height
-      ),
-      proportion: pickMostCommon(
-        nodeSamples.map((sample) => sample.geometry.proportion),
-        first.geometry.proportion
-      ),
+      primitive: representative.geometry.primitive,
+      width: representative.geometry.width,
+      depth: representative.geometry.depth,
+      height: representative.geometry.height,
+      proportion: representative.geometry.proportion,
       skin: pickMostCommon(
         nodeSamples.map((sample) => sample.geometry.skin),
-        first.geometry.skin
+        representative.geometry.skin
       ),
       porosity: pickMostCommon(
         nodeSamples.map((sample) => sample.geometry.porosity),
-        first.geometry.porosity
+        representative.geometry.porosity
       ),
-      vertical_placement: pickMostCommon(
-        nodeSamples.map((sample) => sample.geometry.vertical_placement),
-        first.geometry.vertical_placement
-      ),
-      span_character: pickMostCommon(
-        nodeSamples.map((sample) => sample.geometry.span_character),
-        first.geometry.span_character
-      ),
-      orientation: pickMostCommon(
-        nodeSamples.map((sample) => sample.geometry.orientation),
-        first.geometry.orientation
+      vertical_placement: representative.geometry.vertical_placement,
+      span_character: representative.geometry.span_character,
+      orientation: representative.geometry.orientation,
+      story_count:
+        averageIntegerMetric(nodeSamples.map((sample) => sample.geometry.story_count)) ??
+        representative.geometry.story_count,
+      floor_to_floor_m:
+        averageMetric(nodeSamples.map((sample) => sample.geometry.floor_to_floor_m)) ??
+        representative.geometry.floor_to_floor_m,
+      target_gfa_m2:
+        averageMetric(nodeSamples.map((sample) => sample.geometry.target_gfa_m2), 0) ??
+        representative.geometry.target_gfa_m2,
+      height_m:
+        averageMetric(nodeSamples.map((sample) => sample.geometry.height_m)) ??
+        representative.geometry.height_m,
+      plan_aspect_ratio:
+        averageMetric(nodeSamples.map((sample) => sample.geometry.plan_aspect_ratio)) ??
+        representative.geometry.plan_aspect_ratio,
+      story_span: mergeStorySpan(
+        nodeSamples,
+        averageIntegerMetric(nodeSamples.map((sample) => sample.geometry.story_count)) ??
+        representative.geometry.story_count,
+        representative.geometry.story_span
       ),
     }),
+    variant_space: ensureNodeVariantSpace(
+      {
+        alternative_primitives: Array.from(
+          new Set(
+            normalizedVariantSpaces.flatMap((space) => space.alternative_primitives)
+          )
+        ),
+        aspect_ratio_range: mergeNumericRange(
+          normalizedVariantSpaces.map((space) => space.aspect_ratio_range)
+        ),
+        footprint_scale_range: mergeNumericRange(
+          normalizedVariantSpaces.map((space) => space.footprint_scale_range)
+        ),
+        height_scale_range: mergeNumericRange(
+          normalizedVariantSpaces.map((space) => space.height_scale_range)
+        ),
+        radial_distance_scale_range: mergeNumericRange(
+          normalizedVariantSpaces.map((space) => space.radial_distance_scale_range)
+        ),
+        angle_jitter_deg:
+          averageMetric(
+            normalizedVariantSpaces.map((space) => space.angle_jitter_deg)
+          ) ?? representativeVariantSpace.angle_jitter_deg,
+        freedom: pickMostCommon(
+          normalizedVariantSpaces.map((space) => space.freedom),
+          representativeVariantSpace.freedom
+        ),
+      },
+      representative.geometry
+    ),
     relative_position: {
       anchor_to: pickLongest(
         nodeSamples.map((sample) => normalizeId(sample.relative_position.anchor_to || "")),
@@ -275,6 +469,9 @@ function buildEvidence(votes: RelationVote[]): RelationEvidence[] {
 
 function mergeRelationGroup(key: string, votes: RelationVote[]): MassRelation {
   const sample = votes[0].relation;
+  const normalizedVariantSpaces = votes.map((vote) =>
+    ensureRelationVariantSpace(vote.relation.variant_space)
+  );
   return {
     id: normalizeId(`rel_${key}`),
     source: sample.source_id,
@@ -304,6 +501,14 @@ function mergeRelationGroup(key: string, votes: RelationVote[]): MassRelation {
         sample.geometry_effect ?? "attach"
       ),
     },
+    variant_space: ensureRelationVariantSpace({
+      distance_scale_range: mergeNumericRange(
+        normalizedVariantSpaces.map((space) => space.distance_scale_range)
+      ),
+      lateral_offset_range_m: mergeNumericRange(
+        normalizedVariantSpaces.map((space) => space.lateral_offset_range_m)
+      ),
+    }),
     evidence: buildEvidence(votes),
   };
 }

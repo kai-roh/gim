@@ -15,10 +15,43 @@ import type {
   ResolvedModelRelation,
   SpatialMassGraph,
 } from "./types";
-import { inverseRuleFor } from "./rules";
+import { withDisplayColors } from "./colors";
+import {
+  average,
+  ensureGeometry,
+  ensureNodeVariantSpace,
+  ensureRelationVariantSpace,
+  inverseRuleFor,
+} from "./rules";
 
 type GraphResolutionInput = Omit<SpatialMassGraph, "resolved_model"> & {
   resolved_model?: ResolvedMassModel;
+};
+
+type NodeQuantitativeMetrics = {
+  storyCount: number;
+  floorToFloorM: number;
+  heightM: number;
+  targetGfaM2: number | null;
+  planAspectRatio: number;
+  storySpan: {
+    start: number | null;
+    end: number | null;
+  };
+};
+
+type NodeVariantResolution = {
+  selectedPrimitive: MassNode["geometry"]["primitive"];
+  aspectRatioScale: number;
+  footprintScale: number;
+  heightScale: number;
+  radialDistanceScale: number;
+  angleJitterRad: number;
+};
+
+type RelationVariantResolution = {
+  distanceScale: number;
+  lateralOffsetM: number;
 };
 
 const SCALE_METERS: Record<RelativeScale, number> = {
@@ -52,6 +85,29 @@ const HIERARCHY_WEIGHT: Record<string, number> = {
   secondary: 1,
   tertiary: 2,
 };
+
+const DEFAULT_FLOOR_TO_FLOOR_METERS: Record<MassNode["kind"], number> = {
+  solid: 4.2,
+  void: 4.8,
+  core: 4.1,
+  connector: 4.2,
+};
+
+const HEIGHT_SCALE_STORY_HINT: Record<RelativeScale, number> = {
+  xs: 1,
+  small: 1,
+  medium: 2,
+  large: 4,
+  xl: 6,
+};
+
+const HIERARCHY_GFA_WEIGHT: Record<string, number> = {
+  primary: 1.4,
+  secondary: 1,
+  tertiary: 0.65,
+};
+
+const MIN_PLAN_DIMENSION_METERS = 4;
 
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
@@ -101,15 +157,312 @@ function resolveSeed(graph: GraphResolutionInput, options: ResolveMassModelOptio
   );
 }
 
+function sampleRangeValue(
+  range: { min: number | null; max: number | null },
+  seed: number,
+  token: string,
+  fallback: number
+): number {
+  const min =
+    typeof range.min === "number" && Number.isFinite(range.min) ? range.min : fallback;
+  const max =
+    typeof range.max === "number" && Number.isFinite(range.max) ? range.max : min;
+  if (Math.abs(max - min) < 1e-6) return min;
+  return randomRange(seed, token, min, max);
+}
+
+function inferLegacyNodeVariantSpace(node: MassNode) {
+  const alternatives = new Set<MassNode["geometry"]["primitive"]>([node.geometry.primitive]);
+
+  switch (node.geometry.primitive) {
+    case "block":
+      alternatives.add("bar");
+      if (node.kind !== "core") alternatives.add("plate");
+      break;
+    case "bar":
+      alternatives.add("block");
+      if (node.kind === "connector") alternatives.add("bridge");
+      break;
+    case "plate":
+      alternatives.add("block");
+      alternatives.add("bar");
+      break;
+    case "ring":
+      alternatives.add("block");
+      break;
+    case "tower":
+      alternatives.add("block");
+      break;
+    case "bridge":
+      alternatives.add("bar");
+      break;
+    case "cylinder":
+      alternatives.add("tower");
+      break;
+    default:
+      break;
+  }
+
+  if (node.kind === "void") {
+    alternatives.add(node.geometry.primitive === "block" ? "cylinder" : "block");
+  }
+
+  const freedom: MassNode["variant_space"]["freedom"] =
+    node.kind === "core"
+      ? "guided"
+      : node.hierarchy === "primary"
+        ? "guided"
+        : "exploratory";
+
+  return {
+    alternative_primitives: Array.from(alternatives),
+    freedom,
+  };
+}
+
+function inferLegacyRelationVariantSpace(relation: MassRelation) {
+  if (relation.strength === "hard") {
+    return {
+      distance_scale_range: { min: 0.92, max: 1.12 },
+      lateral_offset_range_m:
+        relation.rule === "above" || relation.rule === "below" || relation.rule === "rests_on"
+          ? { min: 0, max: 2.5 }
+          : { min: 0, max: 1.6 },
+    };
+  }
+
+  return {
+    distance_scale_range: { min: 0.78, max: 1.28 },
+    lateral_offset_range_m: { min: 0, max: 6 },
+  };
+}
+
+function normalizeGraphForResolution(graph: GraphResolutionInput): GraphResolutionInput {
+  return {
+    ...graph,
+    nodes: graph.nodes.map((node) => ({
+      ...node,
+      geometry: ensureGeometry(node.geometry),
+      variant_space: ensureNodeVariantSpace(
+        (node as { variant_space?: MassNode["variant_space"] }).variant_space ??
+          inferLegacyNodeVariantSpace(node),
+        node.geometry
+      ),
+      properties: node.properties ?? {},
+    })),
+    relations: graph.relations.map((relation) => ({
+      ...relation,
+      inverse_rule: relation.inverse_rule ?? inverseRuleFor(relation.rule),
+      variant_space: ensureRelationVariantSpace(
+        (relation as { variant_space?: MassRelation["variant_space"] }).variant_space ??
+          inferLegacyRelationVariantSpace(relation)
+      ),
+    })),
+  };
+}
+
 function localRuleFor(nodeId: string, relation: MassRelation) {
   if (relation.source === nodeId) return relation.rule;
   return relation.inverse_rule || inverseRuleFor(relation.rule);
 }
 
-function baseDimensions(node: MassNode, seed: number): ResolvedMassDimensions {
+function normalizePositiveMetric(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null;
+  return value;
+}
+
+function normalizePositiveInteger(value: number | null | undefined): number | null {
+  const normalized = normalizePositiveMetric(value);
+  return normalized === null ? null : Math.max(1, Math.round(normalized));
+}
+
+function defaultFloorToFloor(node: MassNode): number {
+  const explicit = normalizePositiveMetric(node.geometry.floor_to_floor_m);
+  if (explicit !== null) return explicit;
+  if (node.kind === "void" || node.geometry.porosity === "open") return 4.8;
+  if (node.kind === "core") return 4.1;
+  if (node.kind === "connector") return 4.2;
+  return node.geometry.skin === "transparent" ? 4.4 : DEFAULT_FLOOR_TO_FLOOR_METERS[node.kind];
+}
+
+function categoricalStoryCount(node: MassNode): number {
+  let stories = HEIGHT_SCALE_STORY_HINT[node.geometry.height] ?? 2;
+
+  if (node.geometry.span_character === "single") {
+    stories = Math.min(stories, 2);
+  } else if (node.geometry.span_character === "stacked") {
+    stories = Math.max(stories, 2);
+  } else if (node.geometry.span_character === "multi_level") {
+    stories = Math.max(stories, 4);
+  }
+
+  if (node.geometry.primitive === "tower") stories = Math.max(stories, 6);
+  if (node.geometry.primitive === "bridge") stories = Math.min(stories, 2);
+  if (node.kind === "connector") stories = Math.min(stories, 2);
+  if (node.kind === "core") stories = Math.max(stories, 2);
+
+  return Math.max(1, stories);
+}
+
+function normalizeStorySpan(
+  span: MassNode["geometry"]["story_span"] | undefined,
+  fallbackStoryCount: number
+) {
+  let start = normalizePositiveInteger(span?.start);
+  let end = normalizePositiveInteger(span?.end);
+
+  if (start !== null && end !== null && start > end) {
+    [start, end] = [end, start];
+  }
+  if (start !== null && end === null) {
+    end = start + fallbackStoryCount - 1;
+  }
+  if (end !== null && start === null) {
+    start = Math.max(1, end - fallbackStoryCount + 1);
+  }
+
+  return { start, end };
+}
+
+function resolvePlanAspectRatio(
+  node: MassNode,
+  primitive: MassNode["geometry"]["primitive"],
+  aspectRatioScale: number
+): number {
+  const explicit = normalizePositiveMetric(node.geometry.plan_aspect_ratio);
+  if (explicit !== null) {
+    return Math.max(0.35, explicit * aspectRatioScale);
+  }
+
+  let ratio =
+    node.geometry.proportion === "elongated"
+      ? 2.2
+      : node.geometry.proportion === "slender"
+        ? 1
+        : node.geometry.proportion === "broad"
+          ? 1.35
+          : 1;
+
+  switch (primitive) {
+    case "bar":
+      ratio = Math.max(ratio, 2.8);
+      break;
+    case "bridge":
+      ratio = Math.max(ratio, 4.2);
+      break;
+    case "plate":
+      ratio = Math.max(ratio, 1.7);
+      break;
+    case "tower":
+      ratio = Math.max(0.9, Math.min(ratio, 1.2));
+      break;
+    case "ring":
+    case "cylinder":
+      ratio = 1;
+      break;
+    default:
+      break;
+  }
+
+  return Math.max(0.35, ratio * aspectRatioScale);
+}
+
+function gfaWeight(node: MassNode): number {
+  if (node.kind === "void") return 0;
+  if (node.kind === "connector") return 0.35;
+  if (node.kind === "core") return 0.55;
+  return HIERARCHY_GFA_WEIGHT[node.hierarchy] ?? 1;
+}
+
+function allocateFallbackTargetGfa(graph: GraphResolutionInput): Map<string, number> {
+  const allocations = new Map<string, number>();
+  const totalGfa = normalizePositiveMetric(graph.project.program.total_gfa) ?? 0;
+  if (totalGfa <= 0) return allocations;
+
+  let explicitSum = 0;
+  for (const node of graph.nodes) {
+    explicitSum += normalizePositiveMetric(node.geometry.target_gfa_m2) ?? 0;
+  }
+
+  const remaining = Math.max(totalGfa - explicitSum, 0);
+  if (remaining <= 0) return allocations;
+
+  const candidates = graph.nodes.filter(
+    (node) =>
+      normalizePositiveMetric(node.geometry.target_gfa_m2) === null && gfaWeight(node) > 0
+  );
+  const weightSum = candidates.reduce((sum, node) => sum + gfaWeight(node), 0);
+  if (weightSum <= 0) return allocations;
+
+  for (const node of candidates) {
+    allocations.set(node.id, round2((remaining * gfaWeight(node)) / weightSum));
+  }
+
+  return allocations;
+}
+
+function resolveNodeMetrics(
+  node: MassNode,
+  siteWidth: number,
+  siteDepth: number,
+  fallbackTargetGfaM2?: number,
+  aspectRatioScale = 1,
+  primitive: MassNode["geometry"]["primitive"] = node.geometry.primitive
+): NodeQuantitativeMetrics {
+  const floorToFloorM = defaultFloorToFloor(node);
+  const explicitStoryCount = normalizePositiveInteger(node.geometry.story_count);
+  const derivedStoryCountFromHeight =
+    normalizePositiveMetric(node.geometry.height_m) !== null
+      ? Math.max(1, Math.round((node.geometry.height_m as number) / floorToFloorM))
+      : null;
+
+  let storyCount =
+    explicitStoryCount ?? derivedStoryCountFromHeight ?? categoricalStoryCount(node);
+  let storySpan = normalizeStorySpan(node.geometry.story_span, storyCount);
+  if (storySpan.start !== null && storySpan.end !== null) {
+    storyCount = storySpan.end - storySpan.start + 1;
+  }
+
+  const targetGfaM2 =
+    normalizePositiveMetric(node.geometry.target_gfa_m2) ??
+    normalizePositiveMetric(fallbackTargetGfaM2);
+
+  const hasExplicitVerticalDirective =
+    explicitStoryCount !== null || storySpan.start !== null || storySpan.end !== null;
+  if (
+    targetGfaM2 !== null &&
+    siteWidth > 0 &&
+    siteDepth > 0 &&
+    !hasExplicitVerticalDirective &&
+    node.kind !== "void"
+  ) {
+    const siteArea = siteWidth * siteDepth;
+    const footprintFactor =
+      node.kind === "core" ? 0.22 : node.kind === "connector" ? 0.18 : 0.68;
+    const maxPlanArea = Math.max(siteArea * footprintFactor, 36);
+    storyCount = Math.max(storyCount, Math.ceil(targetGfaM2 / maxPlanArea));
+    storySpan = normalizeStorySpan(node.geometry.story_span, storyCount);
+  }
+
+  const heightM =
+    normalizePositiveMetric(node.geometry.height_m) ?? round2(storyCount * floorToFloorM);
+
+  return {
+    storyCount,
+    floorToFloorM,
+    heightM,
+    targetGfaM2,
+    planAspectRatio: resolvePlanAspectRatio(node, primitive, aspectRatioScale),
+    storySpan,
+  };
+}
+
+function fallbackPlanDimensions(
+  node: MassNode,
+  primitive: MassNode["geometry"]["primitive"]
+): Omit<ResolvedMassDimensions, "height"> {
   let width = SCALE_METERS[node.geometry.width] ?? SCALE_METERS.medium;
   let depth = SCALE_METERS[node.geometry.depth] ?? SCALE_METERS.medium;
-  let height = SCALE_METERS[node.geometry.height] ?? SCALE_METERS.medium;
 
   switch (node.geometry.proportion) {
     case "elongated":
@@ -119,29 +472,16 @@ function baseDimensions(node: MassNode, seed: number): ResolvedMassDimensions {
     case "slender":
       width *= 0.76;
       depth *= 0.76;
-      height *= 1.2;
       break;
     case "broad":
       width *= 1.22;
       depth *= 1.22;
-      height *= 0.9;
       break;
     default:
       break;
   }
 
-  switch (node.geometry.span_character) {
-    case "stacked":
-      height *= 1.25;
-      break;
-    case "multi_level":
-      height *= 1.8;
-      break;
-    default:
-      break;
-  }
-
-  switch (node.geometry.primitive) {
+  switch (primitive) {
     case "bar":
       width *= 1.35;
       depth *= 0.72;
@@ -149,22 +489,18 @@ function baseDimensions(node: MassNode, seed: number): ResolvedMassDimensions {
     case "plate":
       width *= 1.16;
       depth *= 1.12;
-      height *= 0.52;
       break;
     case "tower":
       width *= 0.82;
       depth *= 0.82;
-      height *= 1.9;
       break;
     case "bridge":
       width *= 1.7;
       depth *= 0.58;
-      height *= 0.38;
       break;
     case "ring":
       width *= 1.18;
       depth *= 1.18;
-      height *= 0.52;
       break;
     case "cylinder":
       depth = width;
@@ -178,19 +514,126 @@ function baseDimensions(node: MassNode, seed: number): ResolvedMassDimensions {
     depth *= 0.96;
   }
 
-  const planMin = node.kind === "core" ? 0.94 : 0.86;
-  const planMax = node.kind === "core" ? 1.06 : 1.16;
-  const heightMin = node.kind === "void" ? 0.94 : 0.9;
-  const heightMax = node.kind === "void" ? 1.06 : 1.14;
+  return {
+    width,
+    depth,
+  };
+}
+
+function baseDimensions(
+  node: MassNode,
+  metrics: NodeQuantitativeMetrics,
+  seed: number,
+  variant: NodeVariantResolution
+): ResolvedMassDimensions {
+  const fallback = fallbackPlanDimensions(node, variant.selectedPrimitive);
+
+  let width = fallback.width;
+  let depth = fallback.depth;
+  let height = metrics.heightM * variant.heightScale;
+
+  if (metrics.targetGfaM2 !== null && metrics.storyCount > 0 && node.kind !== "connector") {
+    const planArea = Math.max(
+      metrics.targetGfaM2 / metrics.storyCount,
+      MIN_PLAN_DIMENSION_METERS * MIN_PLAN_DIMENSION_METERS
+    );
+    width = Math.sqrt(planArea * metrics.planAspectRatio);
+    depth = planArea / Math.max(width, MIN_PLAN_DIMENSION_METERS);
+  }
+
+  width *= variant.footprintScale;
+  depth *= variant.footprintScale;
+
+  if (variant.selectedPrimitive === "bridge") {
+    width = Math.max(width, depth * 1.8);
+    depth = Math.max(depth, 3.4);
+  }
+
+  const planMin = node.kind === "core" ? 0.96 : 0.93;
+  const planMax = node.kind === "core" ? 1.04 : 1.07;
+  const heightMin = 0.97;
+  const heightMax = 1.03;
 
   width *= randomRange(seed, `${node.id}:width`, planMin, planMax);
   depth *= randomRange(seed, `${node.id}:depth`, planMin, planMax);
   height *= randomRange(seed, `${node.id}:height`, heightMin, heightMax);
 
   return {
-    width: round2(width),
-    depth: round2(depth),
-    height: round2(height),
+    width: round2(Math.max(width, MIN_PLAN_DIMENSION_METERS)),
+    depth: round2(Math.max(depth, MIN_PLAN_DIMENSION_METERS)),
+    height: round2(Math.max(height, metrics.floorToFloorM)),
+  };
+}
+
+function resolveNodeVariant(node: MassNode, seed: number): NodeVariantResolution {
+  const { variant_space: variantSpace } = node;
+  const basePrimitive = node.geometry.primitive;
+  const alternatives =
+    variantSpace.alternative_primitives.length > 0
+      ? variantSpace.alternative_primitives
+      : [basePrimitive];
+
+  let selectedPrimitive = basePrimitive;
+  if (variantSpace.freedom !== "fixed" && alternatives.length > 1) {
+    const keepBaseBias =
+      variantSpace.freedom === "guided" && alternatives.includes(basePrimitive) ? 0.55 : 0;
+    const primitiveRoll = randomUnit(seed, `${node.id}:variant:primitive`);
+    if (primitiveRoll > keepBaseBias) {
+      const index = Math.floor(
+        randomUnit(seed, `${node.id}:variant:primitive:index`) * alternatives.length
+      );
+      selectedPrimitive = alternatives[index] ?? basePrimitive;
+    }
+  }
+
+  return {
+    selectedPrimitive,
+    aspectRatioScale: sampleRangeValue(
+      variantSpace.aspect_ratio_range,
+      seed,
+      `${node.id}:variant:aspect`,
+      1
+    ),
+    footprintScale: sampleRangeValue(
+      variantSpace.footprint_scale_range,
+      seed,
+      `${node.id}:variant:footprint`,
+      1
+    ),
+    heightScale: sampleRangeValue(
+      variantSpace.height_scale_range,
+      seed,
+      `${node.id}:variant:height`,
+      1
+    ),
+    radialDistanceScale: sampleRangeValue(
+      variantSpace.radial_distance_scale_range,
+      seed,
+      `${node.id}:variant:radial`,
+      1
+    ),
+    angleJitterRad:
+      ((variantSpace.angle_jitter_deg ?? 0) * Math.PI) / 180,
+  };
+}
+
+function resolveRelationVariant(
+  relation: MassRelation,
+  seed: number
+): RelationVariantResolution {
+  return {
+    distanceScale: sampleRangeValue(
+      relation.variant_space.distance_scale_range,
+      seed,
+      `${relation.id}:variant:distance`,
+      1
+    ),
+    lateralOffsetM: sampleRangeValue(
+      relation.variant_space.lateral_offset_range_m,
+      seed,
+      `${relation.id}:variant:lateral`,
+      0
+    ),
   };
 }
 
@@ -198,14 +641,26 @@ function clearanceFor(relation: MassRelation): number {
   return CLEARANCE_METERS[relation.constraints.clearance ?? "medium"] ?? CLEARANCE_METERS.medium;
 }
 
-function directionAngle(node: MassNode, seed: number, relation?: MassRelation): number {
+function directionAngle(
+  node: MassNode,
+  seed: number,
+  relation: MassRelation | undefined,
+  angleJitterRad: number
+): number {
   const hint = `${node.relative_position.relation_hint ?? ""} ${relation?.rationale ?? ""}`.toLowerCase();
   if (hint.includes("east") || hint.includes("right") || hint.includes("오른")) return 0;
   if (hint.includes("west") || hint.includes("left") || hint.includes("왼")) return Math.PI;
   if (hint.includes("north") || hint.includes("front") || hint.includes("앞")) return -Math.PI / 2;
   if (hint.includes("south") || hint.includes("back") || hint.includes("뒤")) return Math.PI / 2;
   const base = ((hashValue(node.id) % 360) / 180) * Math.PI;
-  return base + symmetricJitter(seed, `${node.id}:${relation?.id ?? "free"}:angle`, 0.52);
+  return (
+    base +
+    symmetricJitter(
+      seed,
+      `${node.id}:${relation?.id ?? "free"}:angle`,
+      Math.max(angleJitterRad, 0.08)
+    )
+  );
 }
 
 function relationDistance(
@@ -457,25 +912,48 @@ export function resolveSpatialMassModel(
   graph: GraphResolutionInput,
   options: ResolveMassModelOptions = {}
 ): ResolvedMassModel {
-  const forwardRelations = graph.relations.filter((relation) => !relation.id.includes("__inverse"));
-  const nodeById = new Map(graph.nodes.map((node) => [node.id, node]));
+  const normalizedGraph = normalizeGraphForResolution(graph);
+  const forwardRelations = normalizedGraph.relations.filter(
+    (relation) => !relation.id.includes("__inverse")
+  );
+  const nodeById = new Map(normalizedGraph.nodes.map((node) => [node.id, node]));
   const dimensions = new Map<string, ResolvedMassDimensions>();
   const notes = new Map<string, string[]>();
   const rotationY = new Map<string, number>();
   const positions = new Map<string, { x: number; z: number }>();
   const yMap = new Map<string, number>();
   const booleanOperations = new Map<string, ResolvedBooleanOperation[]>();
-  const levels = resolveBaseLevels(graph);
-  const siteWidth = graph.project.site.dimensions[0] || 40;
-  const siteDepth = graph.project.site.dimensions[1] || 35;
-  const seed = resolveSeed(graph, options);
+  const levels = resolveBaseLevels(normalizedGraph);
+  const siteWidth = normalizedGraph.project.site.dimensions[0] || 40;
+  const siteDepth = normalizedGraph.project.site.dimensions[1] || 35;
+  const seed = resolveSeed(normalizedGraph, options);
+  const allocatedTargetGfa = allocateFallbackTargetGfa(normalizedGraph);
+  const metricsByNode = new Map<string, NodeQuantitativeMetrics>();
+  const nodeVariants = new Map<string, NodeVariantResolution>();
+  const relationVariants = new Map<string, RelationVariantResolution>();
   const globalAngleOffset = symmetricJitter(seed, "global-angle-offset", 0.44);
-  const variantId = options.variant_id ?? graph.resolved_model?.variant_id ?? `variant-${seed}`;
+  const variantId =
+    options.variant_id ?? normalizedGraph.resolved_model?.variant_id ?? `variant-${seed}`;
   const variantLabel =
-    options.variant_label ?? graph.resolved_model?.variant_label ?? "Base";
+    options.variant_label ?? normalizedGraph.resolved_model?.variant_label ?? "Base";
 
-  for (const node of graph.nodes) {
-    dimensions.set(node.id, baseDimensions(node, seed));
+  for (const relation of normalizedGraph.relations) {
+    relationVariants.set(relation.id, resolveRelationVariant(relation, seed));
+  }
+
+  for (const node of normalizedGraph.nodes) {
+    const nodeVariant = resolveNodeVariant(node, seed);
+    nodeVariants.set(node.id, nodeVariant);
+    const metrics = resolveNodeMetrics(
+      node,
+      siteWidth,
+      siteDepth,
+      allocatedTargetGfa.get(node.id),
+      nodeVariant.aspectRatioScale,
+      nodeVariant.selectedPrimitive
+    );
+    metricsByNode.set(node.id, metrics);
+    dimensions.set(node.id, baseDimensions(node, metrics, seed, nodeVariant));
     notes.set(node.id, []);
     rotationY.set(
       node.id,
@@ -485,11 +963,40 @@ export function resolveSpatialMassModel(
           ? 0.35
           : 0
     );
+    if (nodeVariant.selectedPrimitive !== node.geometry.primitive) {
+      notes
+        .get(node.id)
+        ?.push(`Variant primitive switched to ${nodeVariant.selectedPrimitive}.`);
+    }
+    if (node.geometry.target_gfa_m2 == null && metrics.targetGfaM2 !== null) {
+      notes.get(node.id)?.push(`Allocated target GFA ${round2(metrics.targetGfaM2)}m² from project total.`);
+    }
+    if (metrics.storySpan.start !== null && metrics.storySpan.end !== null) {
+      notes
+        .get(node.id)
+        ?.push(`Pinned to stories ${metrics.storySpan.start}-${metrics.storySpan.end}.`);
+    }
   }
 
-  applyDimensionConstraints(graph, dimensions, notes);
+  applyDimensionConstraints(normalizedGraph, dimensions, notes);
 
-  const roots = [...graph.nodes].sort((a, b) => {
+  for (const node of normalizedGraph.nodes) {
+    if (node.kind === "connector") continue;
+    const dims = dimensions.get(node.id);
+    if (!dims) continue;
+
+    const maxWidth = siteWidth > 0 ? siteWidth * 0.92 : dims.width;
+    const maxDepth = siteDepth > 0 ? siteDepth * 0.92 : dims.depth;
+    const clampedWidth = Math.min(dims.width, maxWidth);
+    const clampedDepth = Math.min(dims.depth, maxDepth);
+    if (clampedWidth !== dims.width || clampedDepth !== dims.depth) {
+      dims.width = round2(clampedWidth);
+      dims.depth = round2(clampedDepth);
+      notes.get(node.id)?.push("Clamped to fit site envelope.");
+    }
+  }
+
+  const roots = [...normalizedGraph.nodes].sort((a, b) => {
     if (a.kind !== b.kind) return a.kind === "core" ? -1 : 1;
     const hierarchyDelta = (HIERARCHY_WEIGHT[a.hierarchy] ?? 9) - (HIERARCHY_WEIGHT[b.hierarchy] ?? 9);
     if (hierarchyDelta !== 0) return hierarchyDelta;
@@ -499,13 +1006,19 @@ export function resolveSpatialMassModel(
   let rootIndex = 0;
   for (const node of roots) {
     if (node.relative_position.anchor_to) continue;
+    const nodeVariant = nodeVariants.get(node.id)!;
     const radius =
       Math.max(Math.min(siteWidth, siteDepth) * 0.18 + rootIndex * 4, 8) *
-      randomRange(seed, `${node.id}:root-radius`, 0.88, 1.18);
+      randomRange(seed, `${node.id}:root-radius`, 0.88, 1.18) *
+      nodeVariant.radialDistanceScale;
     const angle =
       (Math.PI * 2 * rootIndex) / Math.max(roots.length, 1) +
       globalAngleOffset +
-      symmetricJitter(seed, `${node.id}:root-angle`, 0.36);
+      symmetricJitter(
+        seed,
+        `${node.id}:root-angle`,
+        Math.max(nodeVariant.angleJitterRad * 0.65, 0.12)
+      );
     if (node.kind === "core") {
       positions.set(node.id, { x: 0, z: 0 });
     } else {
@@ -517,11 +1030,11 @@ export function resolveSpatialMassModel(
     rootIndex += 1;
   }
 
-  for (let iteration = 0; iteration < graph.nodes.length + 2; iteration += 1) {
+  for (let iteration = 0; iteration < normalizedGraph.nodes.length + 2; iteration += 1) {
     let progressed = false;
-    for (const node of graph.nodes) {
+    for (const node of normalizedGraph.nodes) {
       if (positions.has(node.id)) continue;
-      const anchorId = selectAnchorId(node, graph, positions);
+      const anchorId = selectAnchorId(node, normalizedGraph, positions);
       if (!anchorId) continue;
 
       const anchorPosition = positions.get(anchorId);
@@ -529,11 +1042,19 @@ export function resolveSpatialMassModel(
       const nodeDims = dimensions.get(node.id);
       if (!anchorPosition || !anchorDims || !nodeDims) continue;
 
-      const relation = relationBetween(graph, node.id, anchorId);
+      const relation = relationBetween(normalizedGraph, node.id, anchorId);
       const localRule = relation ? localRuleFor(node.id, relation) : "linked";
+      const nodeVariant = nodeVariants.get(node.id)!;
+      const relationVariant = relation
+        ? relationVariants.get(relation.id)
+        : undefined;
       const angle =
-        directionAngle(node, seed, relation) +
-        symmetricJitter(seed, `${node.id}:${anchorId}:anchor-angle`, 0.16);
+        directionAngle(node, seed, relation, nodeVariant.angleJitterRad) +
+        symmetricJitter(
+          seed,
+          `${node.id}:${anchorId}:anchor-angle`,
+          Math.max(nodeVariant.angleJitterRad * 0.35, 0.08)
+        );
       const baseDistance = relationDistance(
         localRule,
         nodeDims,
@@ -545,16 +1066,36 @@ export function resolveSpatialMassModel(
           ? 0
           : round2(
               baseDistance *
+                (relationVariant?.distanceScale ?? 1) *
+                nodeVariant.radialDistanceScale *
                 (relation?.strength === "hard"
                   ? randomRange(seed, `${relation.id}:${node.id}:distance`, 0.92, 1.08)
                   : randomRange(seed, `${relation?.id ?? node.id}:${node.id}:distance`, 0.78, 1.22))
             );
+      const lateralOffsetMagnitude = relationVariant?.lateralOffsetM ?? 0;
+      const lateralOffset =
+        lateralOffsetMagnitude <= 0
+          ? 0
+          : round2(
+              lateralOffsetMagnitude *
+                (randomUnit(seed, `${relation?.id ?? node.id}:${node.id}:lateral-sign`) > 0.5
+                  ? 1
+                  : -1)
+            );
 
       positions.set(node.id, {
-        x: round2(anchorPosition.x + Math.cos(angle) * distance),
-        z: round2(anchorPosition.z + Math.sin(angle) * distance),
+        x: round2(
+          anchorPosition.x +
+            Math.cos(angle) * distance +
+            Math.cos(angle + Math.PI / 2) * lateralOffset
+        ),
+        z: round2(
+          anchorPosition.z +
+            Math.sin(angle) * distance +
+            Math.sin(angle + Math.PI / 2) * lateralOffset
+        ),
       });
-      if (distance > 0 && localRule !== "aligned_with") {
+      if ((distance > 0 || lateralOffset !== 0) && localRule !== "aligned_with") {
         rotationY.set(node.id, angle);
       }
       progressed = true;
@@ -563,15 +1104,21 @@ export function resolveSpatialMassModel(
     if (!progressed) break;
   }
 
-  for (const node of graph.nodes) {
+  for (const node of normalizedGraph.nodes) {
     if (!positions.has(node.id)) {
+      const nodeVariant = nodeVariants.get(node.id)!;
       const angle =
         ((hashValue(node.id) % 360) / 180) * Math.PI +
         globalAngleOffset +
-        symmetricJitter(seed, `${node.id}:fallback-angle`, 0.5);
+        symmetricJitter(
+          seed,
+          `${node.id}:fallback-angle`,
+          Math.max(nodeVariant.angleJitterRad, 0.18)
+        );
       const radius =
         Math.max(siteWidth * 0.14, 10) *
-        randomRange(seed, `${node.id}:fallback-radius`, 0.84, 1.24);
+        randomRange(seed, `${node.id}:fallback-radius`, 0.84, 1.24) *
+        nodeVariant.radialDistanceScale;
       positions.set(node.id, {
         x: round2(Math.cos(angle) * radius),
         z: round2(Math.sin(angle) * Math.max(siteDepth * 0.14, 10)),
@@ -580,9 +1127,26 @@ export function resolveSpatialMassModel(
     }
   }
 
-  for (const node of graph.nodes) {
+  const referenceFloorToFloor = round2(
+    average(
+      normalizedGraph.nodes.map((node) => metricsByNode.get(node.id)?.floorToFloorM ?? 4.2),
+      4.2
+    )
+  );
+  const lockedYNodes = new Set<string>();
+
+  for (const node of normalizedGraph.nodes) {
     const dims = dimensions.get(node.id)!;
-    yMap.set(node.id, (levels.get(node.id) ?? 0) * 12 + dims.height / 2);
+    const metrics = metricsByNode.get(node.id)!;
+    if (metrics.storySpan.start !== null) {
+      lockedYNodes.add(node.id);
+      yMap.set(
+        node.id,
+        round2((metrics.storySpan.start - 1) * referenceFloorToFloor + dims.height / 2)
+      );
+      continue;
+    }
+    yMap.set(node.id, (levels.get(node.id) ?? 0) * referenceFloorToFloor + dims.height / 2);
   }
 
   for (let iteration = 0; iteration < 12; iteration += 1) {
@@ -594,34 +1158,42 @@ export function resolveSpatialMassModel(
       const targetY = yMap.get(relation.target) ?? 0;
       const sourceGap = sourceDims.height / 2 + targetDims.height / 2;
 
-      if (relation.rule === "above" || relation.rule === "rests_on") {
-        const gap = relation.rule === "rests_on" ? 1 : 3;
+      if ((relation.rule === "above" || relation.rule === "rests_on") && !lockedYNodes.has(relation.source)) {
+        const gap = relation.rule === "rests_on" ? Math.max(referenceFloorToFloor * 0.1, 1) : Math.max(referenceFloorToFloor * 0.2, 2);
         yMap.set(relation.source, Math.max(sourceY, targetY + sourceGap + gap));
       }
 
-      if (relation.rule === "below") {
-        yMap.set(relation.source, Math.min(sourceY, targetY - sourceGap - 3));
+      if (relation.rule === "below" && !lockedYNodes.has(relation.source)) {
+        yMap.set(
+          relation.source,
+          Math.min(sourceY, targetY - sourceGap - Math.max(referenceFloorToFloor * 0.2, 2))
+        );
       }
 
-      if (["wraps", "inside", "contains", "linked", "aligned_with", "penetrates"].includes(relation.rule)) {
+      if (
+        ["wraps", "inside", "contains", "linked", "aligned_with", "penetrates"].includes(
+          relation.rule
+        ) &&
+        !lockedYNodes.has(relation.source)
+      ) {
         yMap.set(relation.source, round2((sourceY + targetY) / 2));
       }
     }
   }
 
   let minBottom = Infinity;
-  for (const node of graph.nodes) {
+  for (const node of normalizedGraph.nodes) {
     const dims = dimensions.get(node.id)!;
     const bottom = (yMap.get(node.id) ?? 0) - dims.height / 2;
     minBottom = Math.min(minBottom, bottom);
   }
   if (minBottom < 0) {
-    for (const node of graph.nodes) {
+    for (const node of normalizedGraph.nodes) {
       yMap.set(node.id, round2((yMap.get(node.id) ?? 0) - minBottom));
     }
   }
 
-  for (const node of graph.nodes) {
+  for (const node of normalizedGraph.nodes) {
     if (node.kind !== "connector") continue;
     const peerIds = forwardRelations
       .filter((relation) => relation.source === node.id || relation.target === node.id)
@@ -671,18 +1243,18 @@ export function resolveSpatialMassModel(
     }
   }
 
-  const resolvedNodes: ResolvedMassNode[] = graph.nodes.map((node) => ({
+  const resolvedNodes: ResolvedMassNode[] = normalizedGraph.nodes.map((node) => ({
     node_id: node.id,
     kind: node.kind,
     hierarchy: node.hierarchy,
-    primitive: node.geometry.primitive,
+    primitive: nodeVariants.get(node.id)!.selectedPrimitive,
     anchor_to: node.relative_position.anchor_to,
     dimensions: dimensions.get(node.id)!,
     transform: {
       x: positions.get(node.id)!.x,
       y: round2(yMap.get(node.id) ?? 0),
       z: positions.get(node.id)!.z,
-      rotation_x: node.geometry.primitive === "ring" ? Math.PI / 2 : 0,
+      rotation_x: nodeVariants.get(node.id)!.selectedPrimitive === "ring" ? Math.PI / 2 : 0,
       rotation_y: round2(rotationY.get(node.id) ?? 0),
       rotation_z: 0,
     },
@@ -753,6 +1325,7 @@ export function resolveSpatialMassModel(
     },
     notes: [
       "Deterministic mass model derived from SpatialMassGraph relation constraints.",
+      "Variant space sampling selects permitted primitive, scale, and offset alternatives without changing graph identity.",
       "Void nodes are preserved as subtraction candidates and selectable wireframe overlays.",
       `Satisfied ${relationSuccessCount}/${resolvedRelations.length} forward relations during layout.`,
     ],
@@ -763,12 +1336,14 @@ export function withResolvedMassModel(
   graph: GraphResolutionInput,
   options: ResolveMassModelOptions = {}
 ): SpatialMassGraph {
+  const normalizedGraph = normalizeGraphForResolution(graph);
+  const colorizedGraph = withDisplayColors(normalizedGraph as SpatialMassGraph);
   const baseGraph = {
-    ...graph,
+    ...colorizedGraph,
     metadata: {
-      ...graph.metadata,
-      node_count: graph.nodes.length,
-      relation_count: graph.relations.length,
+      ...colorizedGraph.metadata,
+      node_count: colorizedGraph.nodes.length,
+      relation_count: colorizedGraph.relations.length,
     },
   };
 

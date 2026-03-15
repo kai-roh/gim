@@ -6,17 +6,19 @@ import { ForumProvider, useForum } from "@/lib/forum-context";
 import type { SpatialMassGraph } from "@gim/core";
 import { ForumPanel } from "./ForumPanel";
 import { BuildingFloorView } from "./BuildingFloorView";
-import { MassViewer3D } from "./MassViewer3D";
+import { ImageGenerationPanel } from "./ImageGenerationPanel";
+import { MassViewer3D, type MassViewer3DHandle } from "./MassViewer3D";
 import { NodeInspector } from "./NodeInspector";
 import { NodeEditor } from "./NodeEditor";
-import { EvaluationDashboard } from "./EvaluationDashboard";
 import { SpatialGraphPanel } from "./SpatialGraphPanel";
+import { VariantSnapshotsPanel } from "./VariantSnapshotsPanel";
 
 function WorkspacePanels() {
   const { state, dispatch } = useGraph();
   const { state: forumState } = useForum();
   const [leftPanelMode, setLeftPanelMode] = useState<"forum" | "result">("forum");
   const previousResultReadyRef = useRef(false);
+  const massViewerRef = useRef<MassViewer3DHandle | null>(null);
 
   const hasGraph = !!state.graph;
   const convergenceComplete =
@@ -90,7 +92,15 @@ function WorkspacePanels() {
           <>
             <div style={centerColumnStyle}>
               <div style={viewer3dPanelStyle}>
-                <MassViewer3D />
+                <MassViewer3D ref={massViewerRef} />
+                <div style={imageOverlayWrapStyle}>
+                  <ImageGenerationPanel
+                    graph={state.graph}
+                    captureMonochromeCurrentView={() =>
+                      massViewerRef.current?.captureMonochromeCurrentView() ?? null
+                    }
+                  />
+                </div>
               </div>
               <div style={inspectorPanelStyle}>
                 <NodeInspector />
@@ -115,7 +125,7 @@ function WorkspacePanels() {
                 <SpatialGraphPanel />
               </div>
               <div style={evalPanelStyle}>
-                <EvaluationDashboard />
+                <VariantSnapshotsPanel />
               </div>
             </div>
           </>
@@ -251,6 +261,14 @@ const viewer3dPanelStyle: React.CSSProperties = {
   position: "relative",
 };
 
+const imageOverlayWrapStyle: React.CSSProperties = {
+  position: "absolute",
+  top: 16,
+  left: 16,
+  zIndex: 4,
+  pointerEvents: "none",
+};
+
 const centerColumnStyle: React.CSSProperties = {
   flex: 1,
   minWidth: 0,
@@ -260,8 +278,8 @@ const centerColumnStyle: React.CSSProperties = {
 };
 
 const inspectorPanelStyle: React.CSSProperties = {
-  height: 280,
-  minHeight: 220,
+  height: 248,
+  minHeight: 208,
   borderTop: "1px solid #1a1a2e",
   background: "#0d0d15",
   display: "flex",
@@ -301,7 +319,7 @@ const evalPanelStyle: React.CSSProperties = {
 };
 
 const graphPanelStyle: React.CSSProperties = {
-  height: "52%",
-  minHeight: 340,
+  height: "48%",
+  minHeight: 300,
   overflow: "hidden",
 };

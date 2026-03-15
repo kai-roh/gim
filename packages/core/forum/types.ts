@@ -77,6 +77,17 @@ export type RelativePlacement =
   | "spanning";
 export type SpanCharacter = "single" | "stacked" | "multi_level";
 export type SurfaceOrientation = "orthogonal" | "diagonal" | "curved" | "radial";
+export type VariantFreedom = "fixed" | "guided" | "exploratory";
+
+export interface StorySpan {
+  start: number | null;
+  end: number | null;
+}
+
+export interface NumericRange {
+  min: number | null;
+  max: number | null;
+}
 
 export interface MassGeometryProposal {
   primitive: MassPrimitive;
@@ -89,6 +100,22 @@ export interface MassGeometryProposal {
   vertical_placement: RelativePlacement;
   span_character: SpanCharacter;
   orientation: SurfaceOrientation;
+  story_count: number | null;
+  floor_to_floor_m: number | null;
+  target_gfa_m2: number | null;
+  height_m: number | null;
+  plan_aspect_ratio: number | null;
+  story_span: StorySpan;
+}
+
+export interface MassNodeVariantSpaceProposal {
+  alternative_primitives: MassPrimitive[];
+  aspect_ratio_range: NumericRange;
+  footprint_scale_range: NumericRange;
+  height_scale_range: NumericRange;
+  radial_distance_scale_range: NumericRange;
+  angle_jitter_deg: number | null;
+  freedom: VariantFreedom;
 }
 
 export interface MassNarrativeProposal {
@@ -113,6 +140,7 @@ export interface MassNodeProposal {
   hierarchy: NodeHierarchy;
   spatial_role: string;
   geometry: MassGeometryProposal;
+  variant_space?: Partial<MassNodeVariantSpaceProposal>;
   relative_position: {
     anchor_to?: string;
     relation_hint?: string;
@@ -153,6 +181,12 @@ export interface MassRelationProposal {
   weight: number;
   rationale: string;
   geometry_effect?: "attach" | "separate" | "overlap" | "pierce" | "offset" | "bridge";
+  variant_space?: Partial<MassRelationVariantSpaceProposal>;
+}
+
+export interface MassRelationVariantSpaceProposal {
+  distance_scale_range: NumericRange;
+  lateral_offset_range_m: NumericRange;
 }
 
 export interface StructuralProposal {

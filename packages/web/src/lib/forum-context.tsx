@@ -183,18 +183,41 @@ interface ForumProviderProps {
 }
 
 function summarizeArchitectResponse(response: ArchitectResponse): string {
-  const nodes = response.proposal.mass_entities
-    .slice(0, 4)
-    .map((node) => `- ${node.name} (${node.kind}, ${node.spatial_role})`)
-    .join("\n");
-  const relations = response.proposal.mass_relations
-    .slice(0, 4)
-    .map((relation) => `- ${relation.source_id} ${relation.rule} ${relation.target_id}`)
-    .join("\n");
+  const compact = (text: string, maxChars: number) => {
+    const normalized = text.replace(/\s+/g, " ").trim();
+    if (normalized.length <= maxChars) return normalized;
+    return `${normalized.slice(0, maxChars - 1).trim()}…`;
+  };
 
-  return `${response.stance}\n\n주요 masses:\n${nodes || "- 없음"}\n\n주요 relations:\n${
-    relations || "- 없음"
-  }`;
+  const keyMoves =
+    response.proposal.key_moves.length > 0
+      ? response.proposal.key_moves.slice(0, 3).join(", ")
+      : response.proposal.mass_entities
+          .slice(0, 3)
+          .map((node) => node.name)
+          .join(", ");
+
+  const critique = response.critique?.[0];
+  const critiqueText = critique
+    ? `비평: ${compact(critique.point, 120)}${
+        critique.counter_proposal
+          ? ` 제안은 ${compact(critique.counter_proposal, 100)}`
+          : ""
+      }`
+    : "";
+  const compromiseText = response.compromise
+    ? `타협: ${compact(response.compromise, 120)}`
+    : "";
+
+  return [
+    compact(response.stance, 140),
+    `이유: ${compact(response.reasoning, 220)}`,
+    keyMoves ? `제안: ${keyMoves}` : "",
+    critiqueText,
+    compromiseText,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function summarizePhaseCompletion(phase: DiscussionPhase, responses: ArchitectResponse[]): string {

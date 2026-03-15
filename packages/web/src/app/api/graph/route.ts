@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import * as fs from "fs";
 import * as path from "path";
-import { withResolvedMassModel } from "@gim/core/graph/resolved-model";
+import { withResolvedMassModel } from "@gim/core";
 
 export async function GET() {
   const graphPath = path.resolve(process.cwd(), "../../graph_output/spatial_mass_graph.json");
