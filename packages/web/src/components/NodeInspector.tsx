@@ -14,7 +14,7 @@ export function NodeInspector() {
 
   if (!selectedNode) {
     return (
-      <>
+      <div style={containerStyle}>
         <div style={titleStyle}>Mass Inspector</div>
         <div style={contentStyle}>
           {activeVariant && (
@@ -73,14 +73,7 @@ export function NodeInspector() {
             </Section>
           )}
         </div>
-        <StatsPanel
-          items={[
-            ["Masses", graph.nodes.length],
-            ["Relations", graph.relations.length],
-            ["Variants", variantHistory.length],
-          ]}
-        />
-      </>
+      </div>
     );
   }
 
@@ -91,7 +84,7 @@ export function NodeInspector() {
   );
 
   return (
-    <>
+    <div style={containerStyle}>
       <div style={titleStyle}>Mass Inspector</div>
       <div style={contentStyle}>
         <Section title={selectedNode.name}>
@@ -176,26 +169,6 @@ export function NodeInspector() {
           </Section>
         )}
       </div>
-      <StatsPanel
-        items={[
-          ["Relations", relations.length],
-          ["Influences", selectedNode.architect_influences.length],
-          ["Keywords", selectedNode.narrative.keywords.length],
-        ]}
-      />
-    </>
-  );
-}
-
-function StatsPanel({ items }: { items: Array<[string, number]> }) {
-  return (
-    <div style={statsPanelStyle}>
-      {items.map(([label, value]) => (
-        <div key={label} style={statsRowStyle}>
-          <span style={{ color: "#596273", fontSize: 10 }}>{label}</span>
-          <span style={{ color: "#dce7ff", fontSize: 10 }}>{value}</span>
-        </div>
-      ))}
     </div>
   );
 }
@@ -218,6 +191,14 @@ function Row({ k, v, color }: { k: string; v: string; color?: string }) {
   );
 }
 
+const containerStyle: React.CSSProperties = {
+  position: "relative",
+  display: "flex",
+  flexDirection: "column",
+  flex: 1,
+  minHeight: 0,
+};
+
 const titleStyle: React.CSSProperties = {
   padding: "14px 16px",
   borderBottom: "1px solid #1a1a2e",
@@ -228,7 +209,7 @@ const titleStyle: React.CSSProperties = {
 const contentStyle: React.CSSProperties = {
   flex: 1,
   overflowY: "auto",
-  padding: "10px 16px",
+  padding: "10px 16px 30px",
   fontSize: 11,
   lineHeight: 1.7,
 };
@@ -300,16 +281,4 @@ const relationButtonStyle: React.CSSProperties = {
   textAlign: "left",
   marginBottom: 6,
   fontFamily: "inherit",
-};
-
-const statsPanelStyle: React.CSSProperties = {
-  padding: "10px 16px",
-  borderTop: "1px solid #1a1a2e",
-  fontSize: 10,
-};
-
-const statsRowStyle: React.CSSProperties = {
-  display: "flex",
-  justifyContent: "space-between",
-  padding: "2px 0",
 };

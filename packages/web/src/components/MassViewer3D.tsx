@@ -790,6 +790,20 @@ export const MassViewer3D = forwardRef<MassViewer3DHandle>(function MassViewer3D
   const { graph, selectedNodeId } = state;
   const activeVariant =
     variantHistory.find((variant) => variant.id === activeVariantId) ?? null;
+  const floatingStats = useMemo(
+    () =>
+      graph
+        ? [
+            ["Masses", graph.nodes.length],
+            [
+              "Relations",
+              graph.relations.filter((relation) => !relation.id.includes("__inverse")).length,
+            ],
+            ["Variants", variantHistory.length],
+          ]
+        : [],
+    [graph, variantHistory.length]
+  );
 
   useImperativeHandle(
     ref,
@@ -1061,6 +1075,16 @@ export const MassViewer3D = forwardRef<MassViewer3DHandle>(function MassViewer3D
           </button>
         </div>
         <div ref={containerRef} style={canvasStyle} />
+        {graph && (
+          <div style={floatingMetaStyle}>
+            {floatingStats.map(([label, value]) => (
+              <span key={label} style={floatingMetaItemStyle}>
+                <span style={floatingMetaKeyStyle}>{label}</span>
+                <span style={floatingMetaValueStyle}>{value}</span>
+              </span>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1115,4 +1139,34 @@ const exportButtonStyle: React.CSSProperties = {
 const canvasStyle: React.CSSProperties = {
   width: "100%",
   height: "100%",
+};
+
+const floatingMetaStyle: React.CSSProperties = {
+  position: "absolute",
+  right: 16,
+  bottom: 12,
+  zIndex: 2,
+  display: "flex",
+  flexWrap: "wrap",
+  justifyContent: "flex-end",
+  gap: 10,
+  pointerEvents: "none",
+};
+
+const floatingMetaItemStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "baseline",
+  gap: 4,
+  fontSize: 9,
+  color: "rgba(140, 152, 167, 0.48)",
+  textShadow: "0 1px 2px rgba(0,0,0,0.32)",
+};
+
+const floatingMetaKeyStyle: React.CSSProperties = {
+  textTransform: "uppercase",
+  letterSpacing: 0.7,
+};
+
+const floatingMetaValueStyle: React.CSSProperties = {
+  color: "rgba(220, 231, 255, 0.58)",
 };
