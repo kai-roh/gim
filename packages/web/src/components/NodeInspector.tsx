@@ -1,9 +1,14 @@
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
+import { evaluateQuantitativeScenario } from "@gim/core/graph/scenario-metrics";
 import { useGraph } from "@/lib/graph-context";
 import { KIND_COLORS, RELATION_COLORS } from "@/lib/graph-colors";
 import { BUTTON_RADIUS } from "@/lib/ui";
+
+function formatArea(value: number) {
+  return `${Math.round(value).toLocaleString("en-US")}m²`;
+}
 
 export function NodeInspector() {
   const { state, selectedNode, dispatch, variantHistory, activeVariantId } = useGraph();
@@ -12,6 +17,7 @@ export function NodeInspector() {
   if (!graph) return null;
 
   const activeVariant = variantHistory.find((variant) => variant.id === activeVariantId) ?? null;
+  const scenarioMetrics = useMemo(() => evaluateQuantitativeScenario(graph), [graph]);
 
   if (!selectedNode) {
     return (
@@ -80,19 +86,29 @@ export function NodeInspector() {
 
   const resolvedNode =
     graph.resolved_model.nodes.find((node) => node.node_id === selectedNode.id) ?? null;
+  const quantitativeNode =
+    scenarioMetrics.node_metrics.find((metric) => metric.node_id === selectedNode.id) ?? null;
   const relations = graph.relations.filter(
     (relation) => relation.source === selectedNode.id || relation.target === selectedNode.id
   );
+  const nodeMetricText = quantitativeNode
+    ? quantitativeNode.kind === "void"
+      ? `VOID ${formatArea(quantitativeNode.floorplate_area_m2)}`
+      : `${formatArea(quantitativeNode.floorplate_area_m2)} × ${
+          quantitativeNode.story_count
+        }F = ${formatArea(quantitativeNode.gross_area_m2)}`
+    : null;
 
   return (
     <div style={containerStyle}>
       <div style={titleStyle}>Mass Inspector</div>
       <div style={contentStyle}>
-        <Section title={selectedNode.name}>
+        <Section title={selectedNode.name} meta={nodeMetricText}>
           <Row k="ID" v={selectedNode.id} />
           <Row k="Kind" v={selectedNode.kind} color={KIND_COLORS[selectedNode.kind]} />
           <Row k="Hierarchy" v={selectedNode.hierarchy} />
           <Row k="Role" v={selectedNode.spatial_role} />
+          <Row k="Program" v={selectedNode.program_label || "-"} />
           <Row k="Anchor" v={selectedNode.relative_position.anchor_to || "-"} />
         </Section>
 
@@ -174,10 +190,21 @@ export function NodeInspector() {
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  meta,
+  children,
+}: {
+  title: string;
+  meta?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
     <div style={{ marginBottom: 14 }}>
-      <h4 style={sectionTitleStyle}>{title}</h4>
+      <div style={sectionHeaderStyle}>
+        <h4 style={sectionTitleStyle}>{title}</h4>
+        {meta ? <div style={sectionMetaStyle}>{meta}</div> : null}
+      </div>
       {children}
     </div>
   );
@@ -222,6 +249,21 @@ const sectionTitleStyle: React.CSSProperties = {
   letterSpacing: 1,
   marginBottom: 4,
   fontWeight: "normal",
+};
+
+const sectionHeaderStyle: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "baseline",
+  gap: 12,
+  marginBottom: 4,
+};
+
+const sectionMetaStyle: React.CSSProperties = {
+  color: "#6f7f96",
+  fontSize: 10,
+  textAlign: "right",
+  whiteSpace: "nowrap",
 };
 
 const rowStyle: React.CSSProperties = {

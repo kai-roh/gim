@@ -48,6 +48,49 @@ interface RelationVote {
   relation: MassRelationProposal;
 }
 
+function normalizeProgramText(value: string | null | undefined) {
+  return (value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function inferProgramLabel(
+  nodeSamples: MassNodeProposal[],
+  requestedProgramNames: string[]
+): string | null {
+  const explicit =
+    pickLongest(
+      nodeSamples.map((sample) => sample.program_label?.trim() || ""),
+      ""
+    ) || null;
+  if (explicit) return explicit;
+
+  const normalizedPrograms = requestedProgramNames
+    .map((name) => name.trim())
+    .filter(Boolean);
+  if (normalizedPrograms.length === 0) return null;
+
+  const corpus = normalizeProgramText(
+    nodeSamples
+      .flatMap((sample) => [
+        sample.name,
+        sample.spatial_role,
+        sample.narrative.role,
+        sample.narrative.intent,
+        ...(sample.narrative.keywords ?? []),
+      ])
+      .join(" ")
+  );
+
+  const matched = normalizedPrograms
+    .map((name) => ({
+      raw: name,
+      normalized: normalizeProgramText(name),
+    }))
+    .filter(({ normalized }) => normalized && corpus.includes(normalized))
+    .sort((left, right) => right.normalized.length - left.normalized.length);
+
+  return matched[0]?.raw ?? null;
+}
+
 function projectToFrame(project: ProjectContext): ProjectFrame {
   return {
     company: project.company,
@@ -240,7 +283,11 @@ function mergeStorySpan(
   return normalizeStorySpan({ start, end });
 }
 
-function mergeNodeGroup(nodeId: string, votes: NodeVote[]): MassNode {
+function mergeNodeGroup(
+  nodeId: string,
+  votes: NodeVote[],
+  requestedProgramNames: string[]
+): MassNode {
   const nodeSamples = votes.map((vote) => vote.node);
   const first = nodeSamples[0];
   const representative = selectRepresentativeNodeSample(nodeSamples);
@@ -322,6 +369,7 @@ function mergeNodeGroup(nodeId: string, votes: NodeVote[]): MassNode {
       nodeSamples.map((sample) => sample.spatial_role),
       first.spatial_role
     ),
+    program_label: inferProgramLabel(nodeSamples, requestedProgramNames),
     geometry: ensureGeometry({
       primitive: representative.geometry.primitive,
       width: representative.geometry.width,
@@ -651,10 +699,11 @@ export function buildSpatialMassGraph(
 ): SpatialMassGraph {
   const minSupport = supportThreshold(responses.length);
   const nodeVotes = collectNodeVotes(responses);
+  const requestedProgramNames = project.program.uses.map((use) => use.type);
 
   const nodes = Array.from(nodeVotes.entries())
     .filter(([, votes]) => votes.length >= minSupport)
-    .map(([nodeId, votes]) => mergeNodeGroup(nodeId, votes))
+    .map(([nodeId, votes]) => mergeNodeGroup(nodeId, votes, requestedProgramNames))
     .sort((a, b) => a.id.localeCompare(b.id));
 
   const validNodeIds = new Set(nodes.map((node) => node.id));

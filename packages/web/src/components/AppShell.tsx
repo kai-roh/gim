@@ -11,6 +11,7 @@ import { ImageGenerationPanel } from "./ImageGenerationPanel";
 import { MassViewer3D, type MassViewer3DHandle } from "./MassViewer3D";
 import { NodeInspector } from "./NodeInspector";
 import { SpatialGraphPanel } from "./SpatialGraphPanel";
+import { VariantEvaluationPanel } from "./VariantEvaluationPanel";
 import { VariantSnapshotsPanel } from "./VariantSnapshotsPanel";
 
 function WorkspacePanels() {
@@ -109,10 +110,15 @@ function WorkspacePanels() {
 
             <div style={infoPanelStyle}>
               <div style={graphPanelStyle}>
-                <SpatialGraphPanel />
+                <div style={spatialGraphWrapStyle}>
+                  <SpatialGraphPanel />
+                </div>
+                <div style={snapshotPanelStyle}>
+                  <VariantSnapshotsPanel />
+                </div>
               </div>
               <div style={evalPanelStyle}>
-                <VariantSnapshotsPanel />
+                <VariantEvaluationPanel />
               </div>
             </div>
           </>
@@ -285,14 +291,31 @@ const infoPanelStyle: React.CSSProperties = {
 };
 
 const evalPanelStyle: React.CSSProperties = {
-  flex: 1,
+  height: 248,
+  minHeight: 208,
   borderTop: "1px solid #1a1a2e",
-  overflowY: "auto",
-  minHeight: 0,
+  overflow: "hidden",
+  flexShrink: 0,
 };
 
 const graphPanelStyle: React.CSSProperties = {
-  height: "48%",
-  minHeight: 300,
+  flex: 1,
+  minHeight: 0,
+  display: "flex",
+  flexDirection: "column",
   overflow: "hidden",
+};
+
+const spatialGraphWrapStyle: React.CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  overflow: "hidden",
+};
+
+const snapshotPanelStyle: React.CSSProperties = {
+  height: 178,
+  minHeight: 152,
+  borderTop: "1px solid #1a1a2e",
+  overflow: "hidden",
+  flexShrink: 0,
 };

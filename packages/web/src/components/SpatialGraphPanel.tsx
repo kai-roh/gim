@@ -206,6 +206,7 @@ const eyebrowStyle: React.CSSProperties = {
 const titleStyle: React.CSSProperties = {
   color: "#e8eefc",
   fontSize: 13,
+  whiteSpace: "nowrap",
 };
 
 const legendStyle: React.CSSProperties = {

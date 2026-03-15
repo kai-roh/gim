@@ -139,6 +139,7 @@ export interface MassNodeProposal {
   kind: MassNodeKind;
   hierarchy: NodeHierarchy;
   spatial_role: string;
+  program_label?: string | null;
   geometry: MassGeometryProposal;
   variant_space?: Partial<MassNodeVariantSpaceProposal>;
   relative_position: {
@@ -249,6 +250,7 @@ export interface ProjectContext {
   site: {
     location: string;
     dimensions: [number, number];
+    site_area_m2?: number;
     far: number;
     bcr: number;
     height_limit: number;
@@ -263,7 +265,9 @@ export interface ProjectContext {
     total_gfa: number;
     uses: {
       type: string;
-      ratio: number;
+      ratio?: number | null;
+      target_area_m2?: number | null;
+      required?: boolean;
       requirements?: string;
     }[];
   };

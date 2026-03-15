@@ -284,12 +284,10 @@
 | 2 | `gensler` | Gensler (Jun Xia) | Shanghai Tower | 이중외피, 수직도시, 지속가능성 |
 | 3 | `bjarke_ingels` | Bjarke Ingels (BIG) | Google HQ, CopenHill | 실용적 유토피아, 프로그램 하이브리드, 유희 |
 | 4 | `mvrdv` | MVRDV (Winy Maas) | Markthal, Valley | 데이터 기반 형태, 적층, 공공성 |
-| 5 | `renzo_piano` | Renzo Piano | The Shard, Centre Pompidou | 경량 구조, 빛의 건축, 도시 맥락 |
 | 6 | `fazlur_khan` | Fazlur Rahman Khan (SOM) | Willis Tower | 번들튜브, 구조 합리주의, 효율 |
 | 7 | `snohetta` | Snøhetta | Oslo Opera House | 풍경 건축, 공공 접근, 소재 탐구 |
 | 8 | `ole_scheeren` | Ole Scheeren | Interlace, MahaNakhon | 수평 도시, 복셀 적층, 공동체 |
 | 9 | `thomas_heatherwick` | Thomas Heatherwick | Vessel, Coal Drops Yard | 조각적 구조, 촉각 소재, 몰입 경험 |
-| 10 | `kpf` | Kohn Pedersen Fox | Lotte World Tower | 점진적 테이퍼, 도시 맥락, 실용 |
 
 **Category B: 건축 사상 마스터 (Architectural Visionaries)**
 

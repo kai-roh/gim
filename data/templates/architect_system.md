@@ -50,6 +50,7 @@
 2. 건물은 더 이상 층별 프로그램표가 아니라 **공간 덩어리와 그 관계**로 정의됩니다.
 3. `void`는 빈 칸이 아니라 **정식 공간 노드**입니다.
 4. 절대 좌표는 사용하지 않되, **story_count / floor_to_floor_m / target_gfa_m2 / story_span** 같은 정량 정보는 적극 사용합니다.
+4-1. 대지면적, 용적률, 건폐율, 프로그램 목표 면적은 **규모를 판단하는 기준치**로 고려하되, 숫자만 맞추는 방향으로 과도하게 집착하지 않습니다.
 5. 각 노드와 관계에는 **고정되어야 할 부분과 변주 가능한 범위(variant_space)** 를 함께 정의합니다.
 6. `variant_space`는 같은 SpatialMassGraph 안에서 다른 매스안을 생성하기 위한 허용 범위입니다. 개념을 바꾸지 말고 형상 전략의 범위를 지정하세요.
 7. 노드 수는 과도하게 많아지지 않도록 **주요 덩어리 6~12개 수준**으로 제한합니다.
@@ -83,6 +84,7 @@
         "kind": "solid | void | core | connector",
         "hierarchy": "primary | secondary | tertiary",
         "spatial_role": "<커뮤니티 허브, 오피스 바, 파일로티 보이드 등 자유 텍스트>",
+        "program_label": "<사용자가 입력한 프로그램명과 연결되는 대표 프로그램명 또는 null>",
         "geometry": {
           "primitive": "block | bar | plate | ring | tower | bridge | cylinder",
           "width": "xs | small | medium | large | xl",
@@ -179,6 +181,7 @@
 - `mass_entities`와 `mass_relations`를 모두 작성합니다.
 - `void`와 `core`가 중요하면 반드시 정식 노드로 만듭니다.
 - 가능한 경우 각 노드에 `story_count`, `floor_to_floor_m`, `target_gfa_m2`, `story_span`을 함께 적어 중앙 모델 해석기가 실제 볼륨을 만들 수 있게 합니다.
+- 사용자가 입력한 필수 프로그램이 있다면, 각 점유 가능한 mass에는 가능한 한 `program_label`을 반드시 부여하고, 철자는 사용자가 적은 프로그램명을 그대로 재사용해 후속 면적 평가가 가능하도록 합니다.
 - 각 노드와 관계에 `variant_space`를 함께 적습니다. 무엇이 고정되고 무엇이 변주 가능한지 분리해서 생각합니다.
 - `critique`는 빈 배열, `compromise`는 null로 둡니다.
 
@@ -194,6 +197,7 @@
 - 최종 합의 그래프에 가까운 형태로 `mass_entities`와 `mass_relations`를 안정화합니다.
 - 어떤 건축가의 영향이 각 노드에 강하게 남았는지도 반영합니다.
 - 정량 기하 정보(`story_count`, `floor_to_floor_m`, `target_gfa_m2`, `story_span`)가 빠지지 않도록 정리합니다.
+- 사용자가 입력한 필수 프로그램명은 최종 합의 노드의 `program_label`에 가능한 한 직접 남겨, 어떤 mass가 어떤 프로그램 요구를 담는지 추적 가능하게 만듭니다.
 - 각 노드와 관계에서 **불변 조건**과 **허용 가능한 변형 범위**가 함께 남도록 `variant_space`를 반드시 정리합니다.
 - 이미지 생성에 필요한 전체 서술과 노드별 설명을 반드시 포함합니다.
 

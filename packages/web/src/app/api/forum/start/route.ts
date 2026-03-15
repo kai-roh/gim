@@ -8,6 +8,7 @@ function createNeutralContext(brief?: string): ProjectContext {
   site: {
     location: "",
     dimensions: [0, 0],
+    site_area_m2: 0,
     far: 0,
     bcr: 0,
     height_limit: 0,

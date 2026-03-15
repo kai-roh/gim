@@ -129,6 +129,7 @@ const ARCHITECT_RESPONSE_FORMAT = {
                 "kind",
                 "hierarchy",
                 "spatial_role",
+                "program_label",
                 "geometry",
                 "variant_space",
                 "relative_position",
@@ -141,6 +142,7 @@ const ARCHITECT_RESPONSE_FORMAT = {
                 kind: { type: "string", enum: [...MASS_NODE_KIND] },
                 hierarchy: { type: "string", enum: [...NODE_HIERARCHY] },
                 spatial_role: { type: "string" },
+                program_label: { type: ["string", "null"] },
                 geometry: {
                   type: "object",
                   additionalProperties: false,
@@ -399,6 +401,9 @@ export function buildContextPrompt(context: ProjectContext): string {
 
   const siteLines = [
     context.site.location ? `**위치**: ${context.site.location}` : null,
+    context.site.site_area_m2 && context.site.site_area_m2 > 0
+      ? `**대지면적**: ${context.site.site_area_m2.toLocaleString("ko-KR")} m²`
+      : null,
     context.site.dimensions[0] > 0 && context.site.dimensions[1] > 0
       ? `**대지 크기**: ${context.site.dimensions[0]}m × ${context.site.dimensions[1]}m`
       : null,
@@ -437,9 +442,18 @@ ${siteContextEntries.map(([label, value]) => `- ${label}: ${value}`).join("\n")}
       ? `
 **프로그램 요구**
 ${[
-  context.program.total_gfa > 0 ? `- 총 연면적 목표: ${context.program.total_gfa.toLocaleString("ko-KR")} m²` : null,
+  context.program.total_gfa > 0
+    ? `- 총 연면적 목표: ${context.program.total_gfa.toLocaleString("ko-KR")} m²`
+    : null,
   ...context.program.uses.map(
-    (u) => `- ${u.type}: ${(u.ratio * 100).toFixed(0)}% — ${u.requirements || ""}`
+    (u) =>
+      `- ${u.type}: ${
+        typeof u.target_area_m2 === "number" && u.target_area_m2 > 0
+          ? `${u.target_area_m2.toLocaleString("ko-KR")} m²`
+          : typeof u.ratio === "number" && u.ratio > 0
+            ? `${(u.ratio * 100).toFixed(0)}%`
+            : "면적 미지정"
+      }${u.required ? " · required" : ""}${u.requirements ? ` — ${u.requirements}` : ""}`
   ),
 ]
   .filter(Boolean)
@@ -479,6 +493,8 @@ ${siteSection}${surroundingContextSection}${programSection}${constraintsSection}
 - 층별 프로그램표를 직접 만드는 것이 아니라, 건축적 덩어리와 void, core, connector의 관계 그래프를 제안합니다.
 - 절대 좌표보다 상대 관계를 우선합니다.
 - 대신 노드별 규모를 실제로 해석할 수 있도록 story_count, floor_to_floor_m, target_gfa_m2, story_span 같은 정량 정보를 적극 사용합니다.
+- 대지면적, 용적률, 건폐율, 프로그램 목표 면적은 설계 규모를 맞추기 위한 기준치로 고려하되, 형상을 기계적으로 맞추기보다 전체 설계 논리와 함께 균형 있게 반영합니다.
+- 사용자가 입력한 필수 프로그램이 있다면, 점유 가능한 각 mass의 program_label에는 그 프로그램명을 가능한 한 그대로 남겨 후속 평가가 가능하게 합니다.
 - 노드는 6~12개 주요 덩어리 수준으로 압축합니다.
 - 이미지 생성에 쓸 전체 서술과 노드별 설명을 함께 남깁니다.
 - 사용자가 주지 않은 특정 브랜드, 사이트, 레퍼런스 사례를 임의로 끌어오지 않습니다.

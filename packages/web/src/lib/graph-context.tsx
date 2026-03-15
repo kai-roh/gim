@@ -1,11 +1,17 @@
 "use client";
 
 import React, { createContext, useContext, useReducer, useCallback, useRef } from "react";
-import type { MassNode, ResolvedMassModel, SpatialMassGraph } from "@gim/core";
+import type {
+  MassNode,
+  QuantitativeScenarioMetrics,
+  ResolvedMassModel,
+  SpatialMassGraph,
+} from "@gim/core";
 import {
   resolveSpatialMassModel,
   withResolvedMassModel,
 } from "@gim/core/graph/resolved-model";
+import { evaluateQuantitativeScenario } from "@gim/core/graph/scenario-metrics";
 
 function coreAddNode(graph: SpatialMassGraph, node: MassNode): SpatialMassGraph {
   return withResolvedMassModel({
@@ -47,6 +53,7 @@ export interface ModelVariantSnapshot {
   generatedAt: string;
   previewDataUrl: string | null;
   resolvedModel: ResolvedMassModel;
+  scenarioMetrics: QuantitativeScenarioMetrics;
 }
 
 function withCurrentResolvedModel(
@@ -59,7 +66,10 @@ function withCurrentResolvedModel(
   };
 }
 
-function createVariantSnapshot(resolvedModel: ResolvedMassModel): ModelVariantSnapshot {
+function createVariantSnapshot(
+  graph: SpatialMassGraph,
+  resolvedModel: ResolvedMassModel
+): ModelVariantSnapshot {
   return {
     id: resolvedModel.variant_id,
     label: resolvedModel.variant_label,
@@ -67,11 +77,14 @@ function createVariantSnapshot(resolvedModel: ResolvedMassModel): ModelVariantSn
     generatedAt: resolvedModel.generated_at,
     previewDataUrl: null,
     resolvedModel,
+    scenarioMetrics: evaluateQuantitativeScenario(
+      withCurrentResolvedModel(graph, resolvedModel)
+    ),
   };
 }
 
 function initializeVariantState(graph: SpatialMassGraph) {
-  const snapshot = createVariantSnapshot(graph.resolved_model);
+  const snapshot = createVariantSnapshot(graph, graph.resolved_model);
   return {
     graph,
     variantHistory: [snapshot],
@@ -187,7 +200,7 @@ function graphReducer(state: GraphState, action: GraphAction): GraphState {
     case "ADD_MODEL_VARIANT":
       return state.graph
         ? (() => {
-            const snapshot = createVariantSnapshot(action.resolvedModel);
+            const snapshot = createVariantSnapshot(state.graph, action.resolvedModel);
             const history = [
               ...state.variantHistory.filter((item) => item.id !== snapshot.id),
               snapshot,

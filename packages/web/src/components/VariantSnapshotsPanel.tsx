@@ -41,7 +41,15 @@ export function VariantSnapshotsPanel() {
                 <div style={snapshotPlaceholderStyle}>{variant.label}</div>
               )}
               <div style={captionStyle}>
-                <span style={{ color: active ? "#f4f7ff" : "#dce7ff" }}>{variant.label}</span>
+                <div style={captionTopStyle}>
+                  <span style={{ color: active ? "#f4f7ff" : "#dce7ff" }}>
+                    {variant.label}
+                  </span>
+                  <span style={scoreStyle}>
+                    {Math.round(variant.scenarioMetrics.satisfaction * 100)}%
+                  </span>
+                </div>
+                <div style={scoreMetaStyle}>Scenario score</div>
               </div>
             </button>
           );
@@ -129,7 +137,25 @@ const snapshotPlaceholderStyle: React.CSSProperties = {
 const captionStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
-  gap: 2,
+  gap: 3,
   padding: "7px 8px",
   fontSize: 9,
+};
+
+const captionTopStyle: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "baseline",
+  gap: 6,
+};
+
+const scoreStyle: React.CSSProperties = {
+  color: "#93a8c8",
+  fontSize: 9,
+};
+
+const scoreMetaStyle: React.CSSProperties = {
+  color: "#66768d",
+  fontSize: 8,
+  letterSpacing: 0.2,
 };

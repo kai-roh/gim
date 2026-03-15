@@ -69,6 +69,7 @@ export interface MassNode {
   kind: MassNodeKind;
   hierarchy: NodeHierarchy;
   spatial_role: string;
+  program_label?: string | null;
   geometry: MassGeometryProposal;
   variant_space: MassNodeVariantSpaceProposal;
   relative_position: {
@@ -176,6 +177,39 @@ export interface ResolvedMassModel {
     height: number;
   };
   notes: string[];
+}
+
+export interface QuantitativeNodeMetric {
+  node_id: string;
+  node_name: string;
+  kind: MassNodeKind;
+  program_label: string | null;
+  floorplate_area_m2: number;
+  story_count: number;
+  gross_area_m2: number;
+}
+
+export interface QuantitativeProgramMetric {
+  program: string;
+  target_area_m2: number;
+  actual_area_m2: number;
+  delta_area_m2: number;
+  satisfaction: number;
+  matched_node_ids: string[];
+}
+
+export interface QuantitativeScenarioMetrics {
+  site_area_m2: number | null;
+  total_gfa_m2: number;
+  target_total_gfa_m2: number | null;
+  building_area_m2: number;
+  far_percent: number | null;
+  target_far_percent: number | null;
+  bcr_percent: number | null;
+  target_bcr_percent: number | null;
+  satisfaction: number;
+  node_metrics: QuantitativeNodeMetric[];
+  program_metrics: QuantitativeProgramMetric[];
 }
 
 export interface NodeNarrativeSummary {

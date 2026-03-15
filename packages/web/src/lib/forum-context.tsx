@@ -1,7 +1,12 @@
 "use client";
 
 import React, { createContext, useContext, useReducer, useCallback, useRef } from "react";
-import type { ArchitectResponse, DiscussionPhase, SpatialMassGraph } from "@gim/core";
+import type {
+  ArchitectResponse,
+  DiscussionPhase,
+  ProjectContext,
+  SpatialMassGraph,
+} from "@gim/core";
 
 export interface ArchitectSummary {
   id: string;
@@ -161,7 +166,7 @@ function forumReducer(state: ForumState, action: ForumAction): ForumState {
 interface ForumContextValue {
   state: ForumState;
   dispatch: React.Dispatch<ForumAction>;
-  startSession: (brief?: string) => Promise<void>;
+  startSession: (options?: { brief?: string; context?: ProjectContext }) => Promise<string | null>;
   runPhase: (phase: DiscussionPhase) => Promise<void>;
   runAllPhases: () => Promise<void>;
   addMessage: (type: ForumMessage["type"], content: string, extra?: Partial<ForumMessage>) => void;
@@ -280,7 +285,7 @@ export function ForumProvider({ children, onGraphGenerated }: ForumProviderProps
   );
 
   const startSession = useCallback(
-    async (brief?: string) => {
+    async (options?: { brief?: string; context?: ProjectContext }) => {
       const current = stateRef.current;
       try {
         const response = await fetch("/api/forum/start", {
@@ -288,7 +293,8 @@ export function ForumProvider({ children, onGraphGenerated }: ForumProviderProps
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             panelIds: current.selectedArchitects,
-            brief: brief || current.brief || undefined,
+            brief: options?.brief || current.brief || undefined,
+            context: options?.context,
           }),
         });
         const data = await response.json();
@@ -300,11 +306,13 @@ export function ForumProvider({ children, onGraphGenerated }: ForumProviderProps
             .map((architectId) => architectId.replace(/_/g, " "))
             .join(", ")}`
         );
+        return data.sessionId as string;
       } catch (error) {
         dispatch({
           type: "ERROR",
           error: error instanceof Error ? error.message : "Failed to create session",
         });
+        return null;
       }
     },
     [addMessage]

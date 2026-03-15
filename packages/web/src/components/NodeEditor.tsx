@@ -245,6 +245,7 @@ function AddNodeSection() {
       kind,
       hierarchy: "secondary",
       spatial_role: "new mass",
+      program_label: null,
       geometry: {
         primitive: "block",
         width: "medium",

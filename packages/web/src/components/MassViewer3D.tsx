@@ -12,6 +12,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { OBJExporter } from "three/addons/exporters/OBJExporter.js";
 import { STLExporter } from "three/addons/exporters/STLExporter.js";
 import type { ResolvedMassNode, SpatialMassGraph } from "@gim/core";
+import { evaluateQuantitativeScenario } from "@gim/core/graph/scenario-metrics";
 import { useGraph } from "@/lib/graph-context";
 import { massColor } from "@/lib/graph-colors";
 import { BUTTON_RADIUS } from "@/lib/ui";
@@ -20,6 +21,16 @@ const ORTHO_VIEW_HEIGHT = 92;
 const CAMERA_OFFSET = new THREE.Vector3(60, 68, 60);
 const SUBTRACTABLE_PRIMITIVES = new Set(["block", "bar", "plate", "tower", "bridge"]);
 const BOUNDS_EPSILON = 0.05;
+
+function formatAreaStat(value: number | null) {
+  if (!(typeof value === "number" && Number.isFinite(value))) return "-";
+  return `${Math.round(value).toLocaleString("en-US")} m²`;
+}
+
+function formatPercentStat(value: number | null) {
+  if (!(typeof value === "number" && Number.isFinite(value))) return "-";
+  return `${Math.round(value)}%`;
+}
 
 type LocalBounds = {
   minX: number;
@@ -791,6 +802,12 @@ export const MassViewer3D = forwardRef<MassViewer3DHandle>(function MassViewer3D
   const { graph, selectedNodeId } = state;
   const activeVariant =
     variantHistory.find((variant) => variant.id === activeVariantId) ?? null;
+  const scenarioMetrics = useMemo(
+    () =>
+      activeVariant?.scenarioMetrics ??
+      (graph ? evaluateQuantitativeScenario(graph) : null),
+    [activeVariant?.scenarioMetrics, graph]
+  );
   const floatingStats = useMemo(
     () =>
       graph
@@ -1078,6 +1095,32 @@ export const MassViewer3D = forwardRef<MassViewer3DHandle>(function MassViewer3D
           </div>
         </div>
         <div ref={containerRef} style={canvasStyle} />
+        {scenarioMetrics && (
+          <div style={floatingScenarioStyle}>
+            <div style={floatingScenarioLineStyle}>
+              <span style={floatingScenarioLabelStyle}>FAR</span>
+              <span style={floatingScenarioValueStyle}>
+                {formatPercentStat(scenarioMetrics.far_percent)}
+              </span>
+              <span style={floatingScenarioDividerStyle}>·</span>
+              <span style={floatingScenarioLabelStyle}>GFA</span>
+              <span style={floatingScenarioValueStyle}>
+                {formatAreaStat(scenarioMetrics.total_gfa_m2)}
+              </span>
+            </div>
+            <div style={floatingScenarioLineStyle}>
+              <span style={floatingScenarioLabelStyle}>BCR</span>
+              <span style={floatingScenarioValueStyle}>
+                {formatPercentStat(scenarioMetrics.bcr_percent)}
+              </span>
+              <span style={floatingScenarioDividerStyle}>·</span>
+              <span style={floatingScenarioLabelStyle}>BUILDING AREA</span>
+              <span style={floatingScenarioValueStyle}>
+                {formatAreaStat(scenarioMetrics.building_area_m2)}
+              </span>
+            </div>
+          </div>
+        )}
         {graph && (
           <div style={floatingMetaStyle}>
             {floatingStats.map(([label, value]) => (
@@ -1193,4 +1236,39 @@ const floatingMetaKeyStyle: React.CSSProperties = {
 
 const floatingMetaValueStyle: React.CSSProperties = {
   color: "rgba(220, 231, 255, 0.58)",
+};
+
+const floatingScenarioStyle: React.CSSProperties = {
+  position: "absolute",
+  left: 16,
+  bottom: 12,
+  zIndex: 2,
+  display: "flex",
+  flexDirection: "column",
+  gap: 3,
+  pointerEvents: "none",
+};
+
+const floatingScenarioLineStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "baseline",
+  gap: 5,
+  color: "rgba(220, 231, 255, 0.72)",
+  fontSize: 9,
+  textShadow: "0 1px 2px rgba(0,0,0,0.35)",
+  whiteSpace: "nowrap",
+};
+
+const floatingScenarioLabelStyle: React.CSSProperties = {
+  color: "rgba(140, 152, 167, 0.66)",
+  letterSpacing: 0.7,
+  textTransform: "uppercase",
+};
+
+const floatingScenarioValueStyle: React.CSSProperties = {
+  color: "rgba(220, 231, 255, 0.86)",
+};
+
+const floatingScenarioDividerStyle: React.CSSProperties = {
+  color: "rgba(140, 152, 167, 0.48)",
 };

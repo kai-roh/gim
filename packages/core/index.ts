@@ -76,6 +76,9 @@ export type {
   ResolvedModelRelation,
   ResolveMassModelOptions,
   ResolvedMassModel,
+  QuantitativeNodeMetric,
+  QuantitativeProgramMetric,
+  QuantitativeScenarioMetrics,
   ForumResult,
   VerticalNodeGraph,
   FloorNode,
@@ -86,6 +89,7 @@ export type {
 export { buildSpatialMassGraph } from "./graph/builder";
 export { buildGraphFromForumResult, getLatestResponses } from "./graph/program-graph";
 export { resolveSpatialMassModel, withResolvedMassModel } from "./graph/resolved-model";
+export { evaluateQuantitativeScenario } from "./graph/scenario-metrics";
 
 export {
   addNode,
