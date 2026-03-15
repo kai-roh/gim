@@ -2,7 +2,7 @@
  * Run the architect forum and print the consensus mass graph.
  *
  * Usage:
- *   OPENAI_API_KEY=sk-... OPENAI_MODEL=gpt-4.1 npx tsx packages/core/forum/run-forum.ts
+ *   ANTHROPIC_API_KEY=sk-ant-... ANTHROPIC_MODEL=claude-sonnet-4-20250514 npx tsx packages/core/forum/run-forum.ts
  */
 
 import * as fs from "fs";

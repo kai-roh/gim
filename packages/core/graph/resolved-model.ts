@@ -195,7 +195,7 @@ function baseDimensions(node: MassNode, seed: number): ResolvedMassDimensions {
 }
 
 function clearanceFor(relation: MassRelation): number {
-  return CLEARANCE_METERS[relation.constraints.clearance ?? "medium"] ?? CLEARANCE_METERS.medium;
+  return CLEARANCE_METERS[relation.constraints?.clearance ?? "medium"] ?? CLEARANCE_METERS.medium;
 }
 
 function directionAngle(node: MassNode, seed: number, relation?: MassRelation): number {
@@ -447,7 +447,7 @@ function evaluateResolvedRelation(
     source_id: relation.source,
     target_id: relation.target,
     rule: relation.rule,
-    applied_strategy: relation.constraints.geometry_effect ?? "attach",
+    applied_strategy: relation.constraints?.geometry_effect ?? "attach",
     satisfied,
     notes,
   };
@@ -466,8 +466,9 @@ export function resolveSpatialMassModel(
   const yMap = new Map<string, number>();
   const booleanOperations = new Map<string, ResolvedBooleanOperation[]>();
   const levels = resolveBaseLevels(graph);
-  const siteWidth = graph.project.site.dimensions[0] || 40;
-  const siteDepth = graph.project.site.dimensions[1] || 35;
+  const project = graph.project ?? (graph as any).global;
+  const siteWidth = project?.site?.dimensions?.[0] || 40;
+  const siteDepth = project?.site?.dimensions?.[1] || 35;
   const seed = resolveSeed(graph, options);
   const globalAngleOffset = symmetricJitter(seed, "global-angle-offset", 0.44);
   const variantId = options.variant_id ?? graph.resolved_model?.variant_id ?? `variant-${seed}`;
@@ -704,7 +705,7 @@ export function resolveSpatialMassModel(
         source_id: relation.source,
         target_id: relation.target,
         rule: relation.rule,
-        applied_strategy: relation.constraints.geometry_effect ?? "attach",
+        applied_strategy: relation.constraints?.geometry_effect ?? "attach",
         satisfied: false,
         notes: ["Related node missing from resolved model."],
       };
