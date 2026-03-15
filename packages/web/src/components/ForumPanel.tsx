@@ -530,7 +530,7 @@ const architectButtonStyle: React.CSSProperties = {
 };
 
 const architectListWrapStyle: React.CSSProperties = {
-  maxHeight: 156,
+  maxHeight: 236,
   overflowY: "auto",
   paddingRight: 2,
 };

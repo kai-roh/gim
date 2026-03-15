@@ -9,12 +9,11 @@ import { BuildingFloorView } from "./BuildingFloorView";
 import { ImageGenerationPanel } from "./ImageGenerationPanel";
 import { MassViewer3D, type MassViewer3DHandle } from "./MassViewer3D";
 import { NodeInspector } from "./NodeInspector";
-import { NodeEditor } from "./NodeEditor";
 import { SpatialGraphPanel } from "./SpatialGraphPanel";
 import { VariantSnapshotsPanel } from "./VariantSnapshotsPanel";
 
 function WorkspacePanels() {
-  const { state, dispatch } = useGraph();
+  const { state } = useGraph();
   const { state: forumState } = useForum();
   const [leftPanelMode, setLeftPanelMode] = useState<"forum" | "result">("forum");
   const previousResultReadyRef = useRef(false);
@@ -104,23 +103,10 @@ function WorkspacePanels() {
               </div>
               <div style={inspectorPanelStyle}>
                 <NodeInspector />
-                <NodeEditor />
               </div>
             </div>
 
             <div style={infoPanelStyle}>
-              <div style={editToggleBarStyle}>
-                <button
-                  onClick={() => dispatch({ type: "TOGGLE_EDIT_MODE" })}
-                  style={{
-                    ...editToggleBtnStyle,
-                    background: state.editMode ? "#1a2a3e" : "#1a1a2e",
-                    color: state.editMode ? "#4488cc" : "#555",
-                  }}
-                >
-                  {state.editMode ? "Editing" : "View"}
-                </button>
-              </div>
               <div style={graphPanelStyle}>
                 <SpatialGraphPanel />
               </div>
@@ -295,20 +281,6 @@ const infoPanelStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
   overflow: "hidden",
-};
-
-const editToggleBarStyle: React.CSSProperties = {
-  padding: "8px 12px",
-  borderBottom: "1px solid #1a1a2e",
-};
-
-const editToggleBtnStyle: React.CSSProperties = {
-  border: "1px solid #2a2a3e",
-  fontSize: 10,
-  padding: "4px 12px",
-  borderRadius: 3,
-  cursor: "pointer",
-  fontFamily: "inherit",
 };
 
 const evalPanelStyle: React.CSSProperties = {
