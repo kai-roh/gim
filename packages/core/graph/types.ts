@@ -212,6 +212,14 @@ export interface QuantitativeScenarioMetrics {
   program_metrics: QuantitativeProgramMetric[];
 }
 
+export interface PersistedGraphVariant {
+  id: string;
+  label: string;
+  generated_at: string;
+  resolved_model: ResolvedMassModel;
+  scenario_metrics?: QuantitativeScenarioMetrics;
+}
+
 export interface NodeNarrativeSummary {
   node_id: string;
   summary: string;
@@ -252,6 +260,8 @@ export interface SpatialMassGraph {
   narrative: DesignNarrativeMetadata;
   provenance: DecisionProvenance;
   resolved_model: ResolvedMassModel;
+  variants?: PersistedGraphVariant[];
+  active_variant_id?: string | null;
   metadata: {
     created_at: string;
     source_forum: string;

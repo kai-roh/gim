@@ -1,8 +1,16 @@
 "use client";
 
-import React, { createContext, useContext, useReducer, useCallback, useRef } from "react";
+import React, {
+  createContext,
+  useContext,
+  useReducer,
+  useCallback,
+  useEffect,
+  useRef,
+} from "react";
 import type {
   MassNode,
+  PersistedGraphVariant,
   QuantitativeScenarioMetrics,
   ResolvedMassModel,
   SpatialMassGraph,
@@ -13,9 +21,19 @@ import {
 } from "@gim/core/graph/resolved-model";
 import { evaluateQuantitativeScenario } from "@gim/core/graph/scenario-metrics";
 
+function stripStoredVariants(graph: SpatialMassGraph) {
+  const {
+    resolved_model: _resolvedModel,
+    variants: _variants,
+    active_variant_id: _activeVariantId,
+    ...baseGraph
+  } = graph;
+  return baseGraph;
+}
+
 function coreAddNode(graph: SpatialMassGraph, node: MassNode): SpatialMassGraph {
   return withResolvedMassModel({
-    ...graph,
+    ...stripStoredVariants(graph),
     nodes: [...graph.nodes, node],
   });
 }
@@ -27,7 +45,7 @@ function coreRemoveNode(graph: SpatialMassGraph, nodeId: string): SpatialMassGra
   );
 
   return withResolvedMassModel({
-    ...graph,
+    ...stripStoredVariants(graph),
     nodes,
     relations,
   });
@@ -39,7 +57,7 @@ function coreUpdateNode(
   updates: Partial<MassNode>
 ): SpatialMassGraph {
   return withResolvedMassModel({
-    ...graph,
+    ...stripStoredVariants(graph),
     nodes: graph.nodes.map((node) =>
       node.id === nodeId ? { ...node, ...updates, id: node.id } : node
     ),
@@ -68,7 +86,8 @@ function withCurrentResolvedModel(
 
 function createVariantSnapshot(
   graph: SpatialMassGraph,
-  resolvedModel: ResolvedMassModel
+  resolvedModel: ResolvedMassModel,
+  scenarioMetrics?: QuantitativeScenarioMetrics
 ): ModelVariantSnapshot {
   return {
     id: resolvedModel.variant_id,
@@ -77,18 +96,66 @@ function createVariantSnapshot(
     generatedAt: resolvedModel.generated_at,
     previewDataUrl: null,
     resolvedModel,
-    scenarioMetrics: evaluateQuantitativeScenario(
-      withCurrentResolvedModel(graph, resolvedModel)
-    ),
+    scenarioMetrics:
+      scenarioMetrics ??
+      evaluateQuantitativeScenario(withCurrentResolvedModel(graph, resolvedModel)),
+  };
+}
+
+function snapshotToPersistedVariant(
+  snapshot: ModelVariantSnapshot
+): PersistedGraphVariant {
+  return {
+    id: snapshot.id,
+    label: snapshot.label,
+    generated_at: snapshot.generatedAt,
+    resolved_model: snapshot.resolvedModel,
+    scenario_metrics: snapshot.scenarioMetrics,
+  };
+}
+
+function applyVariantStateToGraph(
+  graph: SpatialMassGraph,
+  variantHistory: ModelVariantSnapshot[],
+  activeVariantId: string | null
+): SpatialMassGraph {
+  const activeVariant =
+    variantHistory.find((variant) => variant.id === activeVariantId) ??
+    variantHistory[variantHistory.length - 1] ??
+    null;
+
+  return {
+    ...withCurrentResolvedModel(graph, activeVariant?.resolvedModel ?? graph.resolved_model),
+    variants: variantHistory.map(snapshotToPersistedVariant),
+    active_variant_id: activeVariant?.id ?? null,
   };
 }
 
 function initializeVariantState(graph: SpatialMassGraph) {
-  const snapshot = createVariantSnapshot(graph, graph.resolved_model);
+  const variantHistory =
+    Array.isArray(graph.variants) && graph.variants.length > 0
+      ? graph.variants.map((variant) =>
+          createVariantSnapshot(
+            graph,
+            variant.resolved_model,
+            variant.scenario_metrics
+          )
+        )
+      : [createVariantSnapshot(graph, graph.resolved_model)];
+  const activeVariantId =
+    (graph.active_variant_id &&
+    variantHistory.some((variant) => variant.id === graph.active_variant_id)
+      ? graph.active_variant_id
+      : variantHistory[variantHistory.length - 1]?.id) ?? null;
+  const snapshot =
+    variantHistory.find((variant) => variant.id === activeVariantId) ??
+    variantHistory[variantHistory.length - 1] ??
+    null;
+
   return {
-    graph,
-    variantHistory: [snapshot],
-    activeVariantId: snapshot.id,
+    graph: applyVariantStateToGraph(graph, variantHistory, snapshot?.id ?? null),
+    variantHistory,
+    activeVariantId: snapshot?.id ?? null,
   };
 }
 
@@ -208,7 +275,7 @@ function graphReducer(state: GraphState, action: GraphAction): GraphState {
 
             return {
               ...state,
-              graph: withCurrentResolvedModel(state.graph, action.resolvedModel),
+              graph: applyVariantStateToGraph(state.graph, history, snapshot.id),
               variantHistory: history,
               activeVariantId: snapshot.id,
             };
@@ -220,7 +287,11 @@ function graphReducer(state: GraphState, action: GraphAction): GraphState {
       if (!snapshot) return state;
       return {
         ...state,
-        graph: withCurrentResolvedModel(state.graph, snapshot.resolvedModel),
+        graph: applyVariantStateToGraph(
+          state.graph,
+          state.variantHistory,
+          snapshot.id
+        ),
         activeVariantId: snapshot.id,
       };
     }
@@ -260,6 +331,7 @@ const GraphContext = createContext<GraphContextValue | null>(null);
 export function GraphProvider({ children }: { children: React.ReactNode }) {
   const [state, dispatch] = useReducer(graphReducer, initialState);
   const undoRef = useRef<UndoState>({ past: [], future: [] });
+  const skipNextPersistRef = useRef(true);
 
   const selectedNode =
     state.graph?.nodes.find((node) => node.id === state.selectedNodeId) ?? null;
@@ -270,6 +342,7 @@ export function GraphProvider({ children }: { children: React.ReactNode }) {
       const response = await fetch("/api/graph");
       if (!response.ok) throw new Error("Failed to load graph");
       const graph = withResolvedMassModel((await response.json()) as SpatialMassGraph);
+      skipNextPersistRef.current = true;
       dispatch({ type: "LOAD_GRAPH_SUCCESS", graph });
       undoRef.current = { past: [], future: [] };
     } catch (error) {
@@ -279,6 +352,24 @@ export function GraphProvider({ children }: { children: React.ReactNode }) {
       });
     }
   }, []);
+
+  useEffect(() => {
+    if (!state.graph) return;
+    if (skipNextPersistRef.current) {
+      skipNextPersistRef.current = false;
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void fetch("/api/graph/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(state.graph),
+      }).catch(() => undefined);
+    }, 180);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [state.graph]);
 
   const editDispatch = useCallback(
     (action: GraphAction) => {

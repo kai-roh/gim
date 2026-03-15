@@ -20,7 +20,7 @@ export interface ArchitectSummary {
 
 export interface ForumMessage {
   id: string;
-  type: "user" | "system" | "architect" | "phase" | "graph";
+  type: "user" | "system" | "architect" | "phase" | "graph" | "payload";
   content: string;
   architectId?: string;
   phase?: DiscussionPhase;
@@ -349,6 +349,12 @@ export function ForumProvider({ children, onGraphGenerated }: ForumProviderProps
         eventSource.addEventListener("forum:architect_complete", (event) => {
           const data = JSON.parse(event.data);
           const response = data.response as ArchitectResponse;
+          const rawPayload =
+            stateRef.current.streamingTokens.trim() || JSON.stringify(response, null, 2);
+          addMessage("payload", rawPayload, {
+            architectId: data.architectId,
+            phase,
+          });
           dispatch({
             type: "ARCHITECT_COMPLETE",
             architectId: data.architectId,

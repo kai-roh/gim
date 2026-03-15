@@ -79,6 +79,7 @@ export type {
   QuantitativeNodeMetric,
   QuantitativeProgramMetric,
   QuantitativeScenarioMetrics,
+  PersistedGraphVariant,
   ForumResult,
   VerticalNodeGraph,
   FloorNode,

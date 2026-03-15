@@ -6,6 +6,7 @@
 import type {
   MassNode,
   MassRelation,
+  PersistedGraphVariant,
   RelativeScale,
   ResolveMassModelOptions,
   ResolvedBooleanOperation,
@@ -111,6 +112,14 @@ const MIN_PLAN_DIMENSION_METERS = 4;
 
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function normalizeVariantLabel(
+  value: string | null | undefined,
+  index: number
+): string {
+  if (value && value !== "Base") return value;
+  return `V${String(index + 1).padStart(2, "0")}`;
 }
 
 function hashValue(input: string): number {
@@ -1351,8 +1360,71 @@ export function withResolvedMassModel(
     },
   };
 
+  const normalizeStoredVariant = (
+    variant: PersistedGraphVariant,
+    index: number
+  ): PersistedGraphVariant => {
+    const resolvedModel = variant.resolved_model;
+    const id = variant.id || resolvedModel?.variant_id || `variant-${index + 1}`;
+    const label = normalizeVariantLabel(
+      variant.label || resolvedModel?.variant_label,
+      index
+    );
+    const generatedAt =
+      variant.generated_at ||
+      resolvedModel?.generated_at ||
+      baseGraph.metadata.created_at;
+
+    return {
+      ...variant,
+      id,
+      label,
+      generated_at: generatedAt,
+      resolved_model: {
+        ...resolvedModel,
+        generated_at: generatedAt,
+        variant_id: id,
+        variant_label: label,
+      },
+    };
+  };
+
+  const buildInitialVariant = (resolvedModel: ResolvedMassModel): PersistedGraphVariant => ({
+    id: resolvedModel.variant_id,
+    label: normalizeVariantLabel(resolvedModel.variant_label, 0),
+    generated_at: resolvedModel.generated_at,
+    resolved_model: {
+      ...resolvedModel,
+      variant_label: normalizeVariantLabel(resolvedModel.variant_label, 0),
+    },
+  });
+
+  const existingVariants =
+    Array.isArray(baseGraph.variants) && baseGraph.variants.length > 0
+      ? baseGraph.variants.map(normalizeStoredVariant)
+      : [];
+
+  const resolvedModel =
+    baseGraph.resolved_model ?? resolveSpatialMassModel(baseGraph, options);
+
+  const variants =
+    existingVariants.length > 0
+      ? existingVariants
+      : [buildInitialVariant(resolvedModel)];
+
+  const requestedActiveVariantId =
+    baseGraph.active_variant_id ??
+    baseGraph.resolved_model?.variant_id ??
+    resolvedModel.variant_id;
+  const activeVariant =
+    variants.find((variant) => variant.id === requestedActiveVariantId) ??
+    variants[variants.length - 1];
+  const activeVariantId = activeVariant?.id ?? null;
+
   return {
     ...baseGraph,
-    resolved_model: resolveSpatialMassModel(baseGraph, options),
+    resolved_model: activeVariant?.resolved_model ?? resolvedModel,
+    variants,
+    active_variant_id: activeVariantId,
   };
 }

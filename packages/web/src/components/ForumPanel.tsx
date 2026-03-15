@@ -31,6 +31,12 @@ interface ProgramTargetDraft {
   area: string;
 }
 
+interface StreamLine {
+  text: string;
+  indent: number;
+  tone: "meta" | "field" | "value" | "syntax";
+}
+
 function createEmptyProgramTargets(): ProgramTargetDraft[] {
   return Array.from({ length: 4 }, () => ({ name: "", area: "" }));
 }
@@ -42,6 +48,66 @@ function isNearBottom(element: HTMLDivElement) {
     element.scrollHeight - element.scrollTop - element.clientHeight <=
     AUTO_SCROLL_THRESHOLD_PX
   );
+}
+
+function sanitizeStreamFragment(fragment: string) {
+  return fragment
+    .replace(/^[{\[]+/, "")
+    .replace(/[}\]]+$/, "")
+    .replace(/^"+|"+$/g, "")
+    .replace(/,$/, "")
+    .trim();
+}
+
+function buildStructuredStreamLines(raw: string, limit?: number): StreamLine[] {
+  if (!raw.trim()) {
+    return [{ text: "awaiting structured output…", indent: 0, tone: "meta" }];
+  }
+
+  const normalized = raw
+    .replace(/([{}\[\],])/g, "\n$1\n")
+    .replace(/\n{2,}/g, "\n");
+  const sourceLines = normalized
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  let indent = 0;
+  const lines: StreamLine[] = [];
+
+  for (const line of sourceLines) {
+    if (line === "}" || line === "]") {
+      indent = Math.max(0, indent - 1);
+      lines.push({ text: line, indent, tone: "syntax" });
+      continue;
+    }
+
+    if (line === "{" || line === "[") {
+      lines.push({ text: line, indent, tone: "syntax" });
+      indent += 1;
+      continue;
+    }
+
+    if (line === ",") continue;
+
+    const keyMatch = line.match(/^"([^"]+)":\s*(.*)$/);
+    if (keyMatch) {
+      const [, key, rawValue] = keyMatch;
+      const value = sanitizeStreamFragment(rawValue);
+      lines.push({
+        text: value ? `${key.padEnd(22, " ")} · ${value}` : key,
+        indent,
+        tone: "field",
+      });
+      continue;
+    }
+
+    const value = sanitizeStreamFragment(line);
+    if (!value) continue;
+    lines.push({ text: value, indent, tone: "value" });
+  }
+
+  return typeof limit === "number" ? lines.slice(-limit) : lines;
 }
 
 export function ForumPanel() {
@@ -141,9 +207,10 @@ export function ForumPanel() {
   const composerDisabled = state.sessionId
     ? isStreaming || input.trim().length === 0
     : isStreaming;
-  const streamingArchitectName =
+  const streamingArchitectName: string =
     state.architects.find((architect) => architect.id === state.streamingArchitectId)?.reference ??
-    state.streamingArchitectId;
+    state.streamingArchitectId ??
+    "architect";
 
   const buildStartContext = useCallback((): ProjectContext | null => {
     if (!siteArea || !far || !bcr) return null;
@@ -518,17 +585,11 @@ export function ForumPanel() {
           <MessageBubble key={message.id} message={message} />
         ))}
         {state.status === "streaming" && state.streamingArchitectId && (
-          <div style={streamingStyle}>
-            <div style={streamingTitleStyle}>{streamingArchitectName}</div>
-            <div style={streamingBodyStyle}>
-              {state.currentPhase
-                ? `${PHASE_LABELS[state.currentPhase]} 단계에서 자신의 판단과 대안을 정리하고 있습니다.`
-                : "건축가 응답을 정리하는 중입니다."}
-            </div>
-            <div style={streamingMetaStyle}>
-              Structured output hidden during streaming
-            </div>
-          </div>
+          <StructuredStreamPreview
+            architectName={streamingArchitectName}
+            phase={state.currentPhase}
+            raw={state.streamingTokens}
+          />
         )}
       </div>
 
@@ -662,7 +723,24 @@ function MessageBubble({ message }: { message: ForumMessage }) {
       ? state.architects.find((architect) => architect.id === message.architectId)?.reference ??
         message.architectId ??
         "architect"
+      : message.type === "payload"
+      ? state.architects.find((architect) => architect.id === message.architectId)?.reference ??
+        message.architectId ??
+        "architect"
       : null;
+
+  if (message.type === "payload") {
+    return (
+      <div style={neutralBubbleWrapStyle}>
+        <StructuredPayloadRecord
+          architectName={architectName ?? "architect"}
+          phase={message.phase ?? null}
+          raw={message.content}
+        />
+      </div>
+    );
+  }
+
   const messageLabel =
     message.type === "architect"
       ? `${architectName}${phaseLabel ? ` · ${phaseLabel}` : ""}`
@@ -706,6 +784,93 @@ function MessageBubble({ message }: { message: ForumMessage }) {
         {message.content}
         </div>
       </div>
+    </div>
+  );
+}
+
+function StructuredStreamPreview({
+  architectName,
+  phase,
+  raw,
+}: {
+  architectName: string;
+  phase: DiscussionPhase | null;
+  raw: string;
+}) {
+  const lines = buildStructuredStreamLines(raw, 72);
+
+  return (
+    <div style={streamingStyle}>
+      <div style={streamingHeaderStyle}>
+        <div>
+          <div style={streamingTitleStyle}>{architectName}</div>
+          <div style={streamingBodyStyle}>
+            {phase
+              ? `${PHASE_LABELS[phase]} 단계 응답을 구조화하는 중`
+              : "구조화 응답을 생성하는 중"}
+          </div>
+        </div>
+        <div style={streamingMetaStyle}>live payload</div>
+      </div>
+      <StructuredStreamLines lines={lines} style={streamLogStyle} />
+    </div>
+  );
+}
+
+function StructuredPayloadRecord({
+  architectName,
+  phase,
+  raw,
+}: {
+  architectName: string;
+  phase: DiscussionPhase | null;
+  raw: string;
+}) {
+  const lines = buildStructuredStreamLines(raw);
+
+  return (
+    <div style={payloadBlockStyle}>
+      <div style={payloadMetaStyle}>
+        {architectName}
+        {phase ? ` · ${PHASE_LABELS[phase]}` : ""}
+        {" · structured payload"}
+      </div>
+      <StructuredStreamLines lines={lines} style={payloadLogStyle} />
+    </div>
+  );
+}
+
+function StructuredStreamLines({
+  lines,
+  style,
+}: {
+  lines: StreamLine[];
+  style: React.CSSProperties;
+}) {
+  return (
+    <div style={style}>
+      {lines.map((line, index) => (
+        <div
+          key={`${index}-${line.text}`}
+          style={{
+            ...streamLineStyle,
+            paddingLeft: `${line.indent * 14 + 8}px`,
+            color:
+              line.tone === "field"
+                ? "#cfe0ff"
+                : line.tone === "meta"
+                  ? "#6f829f"
+                  : line.tone === "syntax"
+                    ? "#6b7a93"
+                    : "#9ecfb4",
+          }}
+        >
+          <span style={streamLineNumberStyle}>
+            {String(index + 1).padStart(2, "0")}
+          </span>
+          <span style={streamLineTextStyle}>{line.text}</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -886,30 +1051,40 @@ const messagesStyle: React.CSSProperties = {
 };
 
 const streamingStyle: React.CSSProperties = {
-  border: "1px dashed #252a33",
-  borderRadius: 10,
-  padding: "10px 12px",
-  background: "#111520",
+  border: "1px solid #1f2b3c",
+  borderRadius: 8,
+  padding: "10px 12px 12px",
+  background: "linear-gradient(180deg, rgba(11,16,24,0.98), rgba(9,12,18,0.98))",
   alignSelf: "flex-start",
-  maxWidth: "92%",
+  width: "100%",
+  boxSizing: "border-box",
+};
+
+const streamingHeaderStyle: React.CSSProperties = {
+  display: "flex",
+  justifyContent: "space-between",
+  gap: 12,
+  alignItems: "flex-start",
+  marginBottom: 8,
 };
 
 const streamingTitleStyle: React.CSSProperties = {
   color: "#5b8cff",
   fontSize: 10,
-  marginBottom: 4,
 };
 
 const streamingBodyStyle: React.CSSProperties = {
-  color: "#d6dce8",
-  fontSize: 11,
-  lineHeight: 1.6,
+  color: "#99a8bf",
+  fontSize: 10,
+  lineHeight: 1.45,
+  marginTop: 2,
 };
 
 const streamingMetaStyle: React.CSSProperties = {
   color: "#596273",
   fontSize: 9,
-  marginTop: 6,
+  textTransform: "uppercase",
+  letterSpacing: 0.8,
 };
 
 const inputBarStyle: React.CSSProperties = {
@@ -1031,7 +1206,9 @@ const baseBubbleStyle: React.CSSProperties = {
 
 const architectBubbleStyle: React.CSSProperties = {
   ...baseBubbleStyle,
-  background: "linear-gradient(180deg, rgba(25,34,23,0.96), rgba(17,21,32,0.96))",
+  borderRadius: 6,
+  background: "linear-gradient(180deg, rgba(24,32,22,0.98), rgba(16,20,28,0.98))",
+  boxShadow: "0 12px 26px rgba(0,0,0,0.2)",
 };
 
 const userBubbleStyle: React.CSSProperties = {
@@ -1066,4 +1243,69 @@ const messageBodyStyle: React.CSSProperties = {
   fontSize: 11,
   whiteSpace: "pre-wrap",
   lineHeight: 1.65,
+};
+
+const streamLogStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 3,
+  border: "1px solid #1a2432",
+  borderRadius: 6,
+  background: "linear-gradient(180deg, rgba(13,18,27,0.96), rgba(8,11,17,0.96))",
+  padding: "6px 0",
+  maxHeight: 228,
+  overflowY: "auto",
+  overflowX: "hidden",
+};
+
+const streamLineStyle: React.CSSProperties = {
+  display: "grid",
+  gridTemplateColumns: "22px minmax(0, 1fr)",
+  alignItems: "start",
+  columnGap: 10,
+  paddingRight: 10,
+  paddingTop: 2,
+  paddingBottom: 2,
+  minHeight: 20,
+  fontFamily:
+    "\"SFMono-Regular\", ui-monospace, Menlo, Monaco, Consolas, monospace",
+  fontSize: 10,
+  lineHeight: 1.8,
+};
+
+const streamLineNumberStyle: React.CSSProperties = {
+  width: 22,
+  flexShrink: 0,
+  color: "#4b5a71",
+  textAlign: "right",
+};
+
+const streamLineTextStyle: React.CSSProperties = {
+  display: "block",
+  minWidth: 0,
+  whiteSpace: "pre-wrap",
+  overflowWrap: "anywhere",
+  wordBreak: "break-word",
+  lineHeight: "inherit",
+};
+
+const payloadBlockStyle: React.CSSProperties = {
+  width: "100%",
+  boxSizing: "border-box",
+  padding: "2px 2px 0",
+};
+
+const payloadMetaStyle: React.CSSProperties = {
+  color: "#5d6c84",
+  fontSize: 9,
+  textTransform: "uppercase",
+  letterSpacing: 0.8,
+  marginBottom: 4,
+};
+
+const payloadLogStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 3,
+  padding: 0,
 };
