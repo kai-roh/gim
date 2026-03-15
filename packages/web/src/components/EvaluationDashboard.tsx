@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef, useCallback } from "react";
 import * as d3 from "d3";
 import type { EvaluationIssue, EvaluationResult } from "@gim/core";
 import { useGraph } from "@/lib/graph-context";
+import { BUTTON_RADIUS } from "@/lib/ui";
 
 const METRIC_LABELS: Record<string, string> = {
   relation_clarity: "Relation",
@@ -314,7 +315,7 @@ const refreshButtonStyle: React.CSSProperties = {
   border: "1px solid #2b3d59",
   background: "#111520",
   color: "#dce7ff",
-  borderRadius: 8,
+  borderRadius: BUTTON_RADIUS,
   padding: "7px 10px",
   fontSize: 10,
   fontFamily: "inherit",
@@ -325,7 +326,7 @@ const metricButtonStyle: React.CSSProperties = {
   width: "100%",
   marginBottom: 4,
   border: "1px solid transparent",
-  borderRadius: 8,
+  borderRadius: BUTTON_RADIUS,
   padding: "4px 6px",
   textAlign: "left",
   fontFamily: "inherit",

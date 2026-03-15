@@ -3,6 +3,7 @@
 import React from "react";
 import { useGraph } from "@/lib/graph-context";
 import { massColor } from "@/lib/graph-colors";
+import { BUTTON_RADIUS } from "@/lib/ui";
 
 export function TowerMinimap() {
   const { state, dispatch } = useGraph();
@@ -65,7 +66,7 @@ const itemStyle: React.CSSProperties = {
   alignItems: "center",
   gap: 8,
   border: "1px solid #252a33",
-  borderRadius: 8,
+  borderRadius: BUTTON_RADIUS,
   background: "#111520",
   padding: "8px 10px",
   cursor: "pointer",

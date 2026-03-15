@@ -3,6 +3,7 @@
 import React from "react";
 import { useGraph } from "@/lib/graph-context";
 import { KIND_COLORS, RELATION_COLORS } from "@/lib/graph-colors";
+import { BUTTON_RADIUS } from "@/lib/ui";
 
 export function NodeInspector() {
   const { state, selectedNode, dispatch, variantHistory, activeVariantId } = useGraph();
@@ -258,7 +259,7 @@ const summaryCardStyle: React.CSSProperties = {
   width: "100%",
   background: "#111520",
   border: "1px solid #232938",
-  borderRadius: 8,
+  borderRadius: BUTTON_RADIUS,
   padding: "10px 12px",
   textAlign: "left",
   display: "flex",
@@ -273,7 +274,7 @@ const relationButtonStyle: React.CSSProperties = {
   width: "100%",
   background: "#111520",
   border: "1px solid #232938",
-  borderRadius: 8,
+  borderRadius: BUTTON_RADIUS,
   padding: "8px 10px",
   display: "flex",
   justifyContent: "space-between",

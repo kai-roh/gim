@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { BUTTON_RADIUS } from "@/lib/ui";
 import type { SpatialMassGraph } from "@gim/core";
 
 type GeneratedImageSet = {
@@ -282,7 +283,7 @@ const titleButtonStyle: React.CSSProperties = {
 
 const generateButtonStyle: React.CSSProperties = {
   border: "1px solid #2f4c73",
-  borderRadius: 999,
+  borderRadius: BUTTON_RADIUS,
   background: "rgba(12, 20, 32, 0.88)",
   color: "#dce7ff",
   padding: "5px 9px",
@@ -293,7 +294,7 @@ const generateButtonStyle: React.CSSProperties = {
 
 const collapsedTabStyle: React.CSSProperties = {
   border: "1px solid rgba(43, 64, 96, 0.75)",
-  borderRadius: 999,
+  borderRadius: BUTTON_RADIUS,
   background: "rgba(9, 14, 22, 0.9)",
   color: "#8ba6d8",
   padding: "7px 10px",
@@ -336,7 +337,7 @@ const sectionLabelStyle: React.CSSProperties = {
 
 const referenceButtonStyle: React.CSSProperties = {
   border: "1px solid #324865",
-  borderRadius: 10,
+  borderRadius: BUTTON_RADIUS,
   overflow: "hidden",
   background: "#f3f3ee",
   minHeight: 72,
@@ -346,7 +347,7 @@ const referenceButtonStyle: React.CSSProperties = {
 
 const imageButtonStyle: React.CSSProperties = {
   border: "1px solid #1d2a3f",
-  borderRadius: 10,
+  borderRadius: BUTTON_RADIUS,
   overflow: "hidden",
   background: "#0a0f18",
   minHeight: 84,
@@ -435,7 +436,7 @@ const closeButtonStyle: React.CSSProperties = {
   right: 14,
   zIndex: 2,
   border: "1px solid #39506f",
-  borderRadius: 999,
+  borderRadius: BUTTON_RADIUS,
   background: "rgba(10, 15, 24, 0.9)",
   color: "#eef4ff",
   padding: "8px 12px",

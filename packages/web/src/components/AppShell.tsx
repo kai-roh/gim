@@ -3,6 +3,7 @@
 import React, { useEffect, useCallback, useRef, useState } from "react";
 import { GraphProvider, useGraph } from "@/lib/graph-context";
 import { ForumProvider, useForum } from "@/lib/forum-context";
+import { BUTTON_RADIUS } from "@/lib/ui";
 import type { SpatialMassGraph } from "@gim/core";
 import { ForumPanel } from "./ForumPanel";
 import { BuildingFloorView } from "./BuildingFloorView";
@@ -208,7 +209,7 @@ const leftPanelTabsStyle: React.CSSProperties = {
 
 const leftPanelTabStyle: React.CSSProperties = {
   border: "1px solid #273247",
-  borderRadius: 999,
+  borderRadius: BUTTON_RADIUS,
   background: "transparent",
   color: "#7f90ab",
   padding: "6px 12px",

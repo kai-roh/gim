@@ -935,7 +935,11 @@ export function resolveSpatialMassModel(
   const variantId =
     options.variant_id ?? normalizedGraph.resolved_model?.variant_id ?? `variant-${seed}`;
   const variantLabel =
-    options.variant_label ?? normalizedGraph.resolved_model?.variant_label ?? "Base";
+    options.variant_label ??
+    (normalizedGraph.resolved_model?.variant_label === "Base"
+      ? "V01"
+      : normalizedGraph.resolved_model?.variant_label) ??
+    "V01";
 
   for (const relation of normalizedGraph.relations) {
     relationVariants.set(relation.id, resolveRelationVariant(relation, seed));

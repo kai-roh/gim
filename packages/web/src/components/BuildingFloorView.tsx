@@ -5,6 +5,7 @@ import type { SpatialMassGraph } from "@gim/core";
 import { useGraph } from "@/lib/graph-context";
 import { useForum } from "@/lib/forum-context";
 import { HIERARCHY_COLORS, KIND_COLORS, RELATION_COLORS, massColor } from "@/lib/graph-colors";
+import { BUTTON_RADIUS } from "@/lib/ui";
 
 function formatTimestamp(iso: string): string {
   const date = new Date(iso);
@@ -280,7 +281,7 @@ const downloadButtonStyle: React.CSSProperties = {
   border: "1px solid #2b3d59",
   background: "#111520",
   color: "#dce7ff",
-  borderRadius: 8,
+  borderRadius: BUTTON_RADIUS,
   padding: "7px 10px",
   fontSize: 10,
   fontFamily: "inherit",
@@ -300,7 +301,7 @@ const filterBarStyle: React.CSSProperties = {
 const filterButtonStyle: React.CSSProperties = {
   border: "1px solid #252a33",
   background: "transparent",
-  borderRadius: 999,
+  borderRadius: BUTTON_RADIUS,
   padding: "4px 8px",
   fontSize: 10,
   cursor: "pointer",
@@ -333,7 +334,7 @@ const cardGridStyle: React.CSSProperties = {
 const cardStyle: React.CSSProperties = {
   background: "#111520",
   border: "1px solid #242936",
-  borderRadius: 10,
+  borderRadius: BUTTON_RADIUS,
   padding: 12,
   textAlign: "left",
   display: "flex",

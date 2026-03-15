@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useGraph } from "@/lib/graph-context";
 import { HIERARCHY_COLORS, RELATION_COLORS, massColor } from "@/lib/graph-colors";
 
@@ -22,7 +22,6 @@ function layoutNodes(nodeIds: string[], radius: number, center: Point): Map<stri
 export function SpatialGraphPanel() {
   const { state, dispatch } = useGraph();
   const { graph, selectedNodeId, activeRelationFamilies } = state;
-  const [search, setSearch] = useState("");
   const [zoom, setZoom] = useState(1);
 
   const viewModel = useMemo(() => {
@@ -30,7 +29,7 @@ export function SpatialGraphPanel() {
 
     const hierarchyOrder = ["primary", "secondary", "tertiary"] as const;
     const positions = new Map<string, Point>();
-    const center = { x: 210, y: 180 };
+    const center = { x: 210, y: 164 };
 
     hierarchyOrder.forEach((hierarchy, level) => {
       const ids = graph.nodes
@@ -60,29 +59,6 @@ export function SpatialGraphPanel() {
     return ids;
   }, [selectedNodeId, viewModel]);
 
-  const handleSearch = useCallback(() => {
-    if (!graph) return;
-    const query = search.trim().toLowerCase();
-    if (!query) {
-      dispatch({ type: "SELECT_NODE", nodeId: null });
-      return;
-    }
-
-    const match = graph.nodes.find(
-      (node) =>
-        node.name.toLowerCase().includes(query) ||
-        node.id.toLowerCase().includes(query) ||
-        node.spatial_role.toLowerCase().includes(query)
-    );
-    if (match) {
-      dispatch({ type: "SELECT_NODE", nodeId: match.id });
-    }
-  }, [dispatch, graph, search]);
-
-  const adjustZoom = useCallback((delta: number) => {
-    setZoom((value) => Math.min(2.4, Math.max(0.65, value + delta)));
-  }, []);
-
   if (!graph || !viewModel) return null;
 
   return (
@@ -107,51 +83,22 @@ export function SpatialGraphPanel() {
         </div>
       </div>
 
-      <div style={controlBarStyle}>
-        <form
-          style={searchWrapStyle}
-          onSubmit={(event) => {
-            event.preventDefault();
-            handleSearch();
-          }}
-        >
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search node"
-            style={searchInputStyle}
-          />
-          <button type="submit" style={controlButtonStyle}>
-            Find
-          </button>
-        </form>
-        <div style={zoomControlsStyle}>
-          <button type="button" onClick={() => adjustZoom(-0.15)} style={controlButtonStyle}>
-            -
-          </button>
-          <button type="button" onClick={() => setZoom(1)} style={controlButtonStyle}>
-            Reset
-          </button>
-          <button type="button" onClick={() => adjustZoom(0.15)} style={controlButtonStyle}>
-            +
-          </button>
-        </div>
-      </div>
-
       <svg
         viewBox="0 0 420 360"
         style={svgStyle}
         onWheel={(event) => {
           event.preventDefault();
-          adjustZoom(event.deltaY > 0 ? -0.08 : 0.08);
+          setZoom((value) =>
+            Math.min(2.4, Math.max(0.65, value + (event.deltaY > 0 ? -0.08 : 0.08)))
+          );
         }}
       >
-        <g transform={`translate(210 180) scale(${zoom}) translate(-210 -180)`}>
+        <g transform={`translate(210 164) scale(${zoom}) translate(-210 -164)`}>
           {[42, 104, 166].map((radius) => (
             <circle
               key={radius}
               cx={210}
-              cy={180}
+              cy={164}
               r={radius}
               fill="none"
               stroke="#182131"
@@ -287,50 +234,4 @@ const svgStyle: React.CSSProperties = {
   height: "100%",
   minHeight: 320,
   background: "radial-gradient(circle at 50% 50%, rgba(30,43,62,0.32), rgba(10,10,15,0.9))",
-};
-
-const controlBarStyle: React.CSSProperties = {
-  padding: "10px 16px",
-  borderBottom: "1px solid #1a1a2e",
-  display: "flex",
-  justifyContent: "space-between",
-  gap: 10,
-  alignItems: "center",
-  flexWrap: "wrap",
-};
-
-const searchWrapStyle: React.CSSProperties = {
-  display: "flex",
-  gap: 6,
-  alignItems: "center",
-  flex: 1,
-  minWidth: 0,
-};
-
-const searchInputStyle: React.CSSProperties = {
-  flex: 1,
-  minWidth: 0,
-  border: "1px solid #253041",
-  borderRadius: 8,
-  background: "#111520",
-  color: "#dce7ff",
-  padding: "7px 10px",
-  fontFamily: "inherit",
-  fontSize: 10,
-};
-
-const zoomControlsStyle: React.CSSProperties = {
-  display: "flex",
-  gap: 6,
-};
-
-const controlButtonStyle: React.CSSProperties = {
-  border: "1px solid #2b3d59",
-  background: "#111520",
-  color: "#dce7ff",
-  borderRadius: 8,
-  padding: "7px 10px",
-  fontSize: 10,
-  fontFamily: "inherit",
-  cursor: "pointer",
 };

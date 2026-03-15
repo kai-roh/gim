@@ -2,6 +2,7 @@
 
 import React from "react";
 import { useGraph } from "@/lib/graph-context";
+import { BUTTON_RADIUS } from "@/lib/ui";
 
 export function VariantSnapshotsPanel() {
   const { variantHistory, activeVariantId, activateVariant } = useGraph();
@@ -41,7 +42,6 @@ export function VariantSnapshotsPanel() {
               )}
               <div style={captionStyle}>
                 <span style={{ color: active ? "#f4f7ff" : "#dce7ff" }}>{variant.label}</span>
-                <span style={{ color: "#74839b" }}>seed {variant.seed}</span>
               </div>
             </button>
           );
@@ -87,8 +87,8 @@ const metaStyle: React.CSSProperties = {
 
 const listStyle: React.CSSProperties = {
   display: "grid",
-  gridTemplateColumns: "1fr 1fr",
-  gap: 10,
+  gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+  gap: 8,
   overflowY: "auto",
   minHeight: 0,
   alignContent: "start",
@@ -96,7 +96,7 @@ const listStyle: React.CSSProperties = {
 
 const snapshotButtonStyle: React.CSSProperties = {
   width: "100%",
-  borderRadius: 10,
+  borderRadius: BUTTON_RADIUS,
   border: "1px solid #2a3445",
   background: "#111520",
   overflow: "hidden",
@@ -108,7 +108,7 @@ const snapshotButtonStyle: React.CSSProperties = {
 
 const snapshotImageStyle: React.CSSProperties = {
   width: "100%",
-  height: 86,
+  height: 64,
   objectFit: "cover",
   display: "block",
   background: "#08101a",
@@ -116,7 +116,7 @@ const snapshotImageStyle: React.CSSProperties = {
 
 const snapshotPlaceholderStyle: React.CSSProperties = {
   width: "100%",
-  height: 86,
+  height: 64,
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
@@ -130,6 +130,6 @@ const captionStyle: React.CSSProperties = {
   display: "flex",
   flexDirection: "column",
   gap: 2,
-  padding: "8px 10px",
-  fontSize: 10,
+  padding: "7px 8px",
+  fontSize: 9,
 };

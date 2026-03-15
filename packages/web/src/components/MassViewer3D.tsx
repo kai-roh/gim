@@ -14,6 +14,7 @@ import { STLExporter } from "three/addons/exporters/STLExporter.js";
 import type { ResolvedMassNode, SpatialMassGraph } from "@gim/core";
 import { useGraph } from "@/lib/graph-context";
 import { massColor } from "@/lib/graph-colors";
+import { BUTTON_RADIUS } from "@/lib/ui";
 
 const ORTHO_VIEW_HEIGHT = 92;
 const CAMERA_OFFSET = new THREE.Vector3(60, 68, 60);
@@ -1045,34 +1046,36 @@ export const MassViewer3D = forwardRef<MassViewer3DHandle>(function MassViewer3D
   return (
     <div style={viewerShellStyle}>
       <div style={canvasWrapStyle}>
+        {graph && (
+          <div style={variantLabelStyle}>{graph.resolved_model.variant_label}</div>
+        )}
         <div style={exportBarStyle}>
-          <div style={variantBadgeStyle}>
-            {graph ? graph.resolved_model.variant_label : "No Variant"}
-          </div>
           <button
             type="button"
             onClick={regenerateVariant}
-            style={exportButtonStyle}
+            style={regenButtonStyle}
             disabled={!graph}
           >
             Regen
           </button>
-          <button
-            type="button"
-            onClick={handleExportObj}
-            style={exportButtonStyle}
-            disabled={!graph}
-          >
-            Export OBJ
-          </button>
-          <button
-            type="button"
-            onClick={handleExportStl}
-            style={exportButtonStyle}
-            disabled={!graph}
-          >
-            Export STL
-          </button>
+          <div style={exportStackStyle}>
+            <button
+              type="button"
+              onClick={handleExportObj}
+              style={exportButtonStyle}
+              disabled={!graph}
+            >
+              Export OBJ
+            </button>
+            <button
+              type="button"
+              onClick={handleExportStl}
+              style={exportButtonStyle}
+              disabled={!graph}
+            >
+              Export STL
+            </button>
+          </div>
         </div>
         <div ref={containerRef} style={canvasStyle} />
         {graph && (
@@ -1111,29 +1114,50 @@ const exportBarStyle: React.CSSProperties = {
   zIndex: 2,
   display: "flex",
   gap: 8,
+  alignItems: "stretch",
 };
 
-const variantBadgeStyle: React.CSSProperties = {
-  border: "1px solid #314764",
-  borderRadius: 999,
-  background: "rgba(12, 20, 32, 0.9)",
-  color: "#dce7ff",
-  padding: "8px 12px",
-  fontSize: 11,
-  lineHeight: 1,
-  backdropFilter: "blur(8px)",
+const variantLabelStyle: React.CSSProperties = {
+  position: "absolute",
+  top: 18,
+  left: "50%",
+  transform: "translateX(-50%)",
+  zIndex: 2,
+  color: "rgba(232, 238, 252, 0.88)",
+  fontSize: 13,
+  fontWeight: 600,
+  letterSpacing: 0.8,
+  textTransform: "uppercase",
+  textShadow: "0 1px 2px rgba(0,0,0,0.38)",
+  pointerEvents: "none",
 };
 
 const exportButtonStyle: React.CSSProperties = {
   border: "1px solid #2f4c73",
-  borderRadius: 8,
+  borderRadius: BUTTON_RADIUS,
   background: "rgba(12, 20, 32, 0.88)",
   color: "#dce7ff",
-  padding: "8px 12px",
+  padding: "6px 12px",
   fontFamily: "inherit",
   fontSize: 11,
   cursor: "pointer",
   backdropFilter: "blur(8px)",
+  minHeight: 0,
+};
+
+const exportStackStyle: React.CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 6,
+};
+
+const regenButtonStyle: React.CSSProperties = {
+  ...exportButtonStyle,
+  padding: "10px 14px",
+  fontSize: 12,
+  fontWeight: 600,
+  minWidth: 78,
+  alignSelf: "stretch",
 };
 
 const canvasStyle: React.CSSProperties = {

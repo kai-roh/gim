@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useForum, type ArchitectSummary, type ForumMessage } from "@/lib/forum-context";
 import { useGraph } from "@/lib/graph-context";
+import { BUTTON_RADIUS } from "@/lib/ui";
 import type { DiscussionPhase } from "@gim/core";
 
 const PHASE_ORDER: DiscussionPhase[] = ["proposal", "cross_critique", "convergence"];
@@ -25,6 +26,15 @@ interface SessionSummary {
   hasGraph: boolean;
 }
 
+const AUTO_SCROLL_THRESHOLD_PX = 36;
+
+function isNearBottom(element: HTMLDivElement) {
+  return (
+    element.scrollHeight - element.scrollTop - element.clientHeight <=
+    AUTO_SCROLL_THRESHOLD_PX
+  );
+}
+
 export function ForumPanel() {
   const { state, dispatch, startSession, runPhase, runAllPhases, addMessage } = useForum();
   const graph = useGraph();
@@ -34,6 +44,7 @@ export function ForumPanel() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [loadingSessions, setLoadingSessions] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
 
   useEffect(() => {
     fetch("/api/architects")
@@ -43,10 +54,15 @@ export function ForumPanel() {
   }, [dispatch]);
 
   useEffect(() => {
-    if (scrollRef.current) {
+    if (scrollRef.current && shouldAutoScrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [state.messages, state.streamingTokens]);
+
+  const handleMessagesScroll = useCallback(() => {
+    if (!scrollRef.current) return;
+    shouldAutoScrollRef.current = isNearBottom(scrollRef.current);
+  }, []);
 
   useEffect(() => {
     if (state.sessionId) {
@@ -284,7 +300,7 @@ export function ForumPanel() {
         </div>
       )}
 
-      <div ref={scrollRef} style={messagesStyle}>
+      <div ref={scrollRef} style={messagesStyle} onScroll={handleMessagesScroll}>
         {state.messages.map((message) => (
           <MessageBubble key={message.id} message={message} />
         ))}
@@ -379,7 +395,12 @@ function ArchitectSelector({
       )}
 
       {!collapsed && (
-        <div style={architectListWrapStyle}>
+        <div
+          style={{
+            ...architectListWrapStyle,
+            maxHeight: sessionLocked ? 236 : 316,
+          }}
+        >
           <div style={architectListStyle}>
             {architects.map((architect) => {
               const active = selected.includes(architect.id);
@@ -498,7 +519,7 @@ const historyBtnStyle: React.CSSProperties = {
   color: "#d6dce8",
   width: 28,
   height: 28,
-  borderRadius: 6,
+  borderRadius: BUTTON_RADIUS,
   cursor: "pointer",
   fontFamily: "inherit",
 };
@@ -521,14 +542,13 @@ const architectListStyle: React.CSSProperties = {
 const architectButtonStyle: React.CSSProperties = {
   textAlign: "left",
   border: "1px solid #252a33",
-  borderRadius: 8,
+  borderRadius: BUTTON_RADIUS,
   padding: "8px 9px",
   cursor: "pointer",
   fontFamily: "inherit",
 };
 
 const architectListWrapStyle: React.CSSProperties = {
-  maxHeight: 236,
   overflowY: "auto",
   paddingRight: 2,
 };
@@ -553,7 +573,7 @@ const historyPanelStyle: React.CSSProperties = {
 
 const historyItemStyle: React.CSSProperties = {
   border: "1px solid #252a33",
-  borderRadius: 8,
+  borderRadius: BUTTON_RADIUS,
   padding: "8px 10px",
   background: "#111520",
   cursor: "pointer",
@@ -639,7 +659,7 @@ const selectorCountStyle: React.CSSProperties = {
 
 const collapseButtonStyle: React.CSSProperties = {
   border: "1px solid #252a33",
-  borderRadius: 6,
+  borderRadius: BUTTON_RADIUS,
   background: "#111520",
   color: "#d6dce8",
   fontFamily: "inherit",
@@ -688,7 +708,7 @@ const composerRowStyle: React.CSSProperties = {
 const composerButtonStyle: React.CSSProperties = {
   minWidth: 92,
   border: "1px solid #2c4f88",
-  borderRadius: 8,
+  borderRadius: BUTTON_RADIUS,
   background: "#16325c",
   color: "#e8f0ff",
   padding: "0 14px",

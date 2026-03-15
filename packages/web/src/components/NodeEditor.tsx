@@ -10,6 +10,7 @@ import type {
   RelativeScale,
 } from "@gim/core";
 import { useGraph } from "@/lib/graph-context";
+import { BUTTON_RADIUS } from "@/lib/ui";
 
 const NODE_KINDS: MassNodeKind[] = ["solid", "void", "core", "connector"];
 const HIERARCHIES: NodeHierarchy[] = ["primary", "secondary", "tertiary"];
@@ -400,7 +401,7 @@ const undoBtnStyle: React.CSSProperties = {
   background: "#171c28",
   color: "#d6dce8",
   border: "1px solid #2a2a3e",
-  borderRadius: 4,
+  borderRadius: BUTTON_RADIUS,
   cursor: "pointer",
   padding: "2px 8px",
 };
@@ -411,7 +412,7 @@ const deleteBtnStyle: React.CSSProperties = {
   background: "#2a1016",
   color: "#ff8f9d",
   border: "1px solid #4f1a24",
-  borderRadius: 4,
+  borderRadius: BUTTON_RADIUS,
   padding: "6px 8px",
   cursor: "pointer",
   fontFamily: "inherit",
@@ -422,7 +423,7 @@ const addBtnStyle: React.CSSProperties = {
   background: "#171c28",
   color: "#d6dce8",
   border: "1px solid #2a2a3e",
-  borderRadius: 4,
+  borderRadius: BUTTON_RADIUS,
   padding: "6px 8px",
   cursor: "pointer",
   fontFamily: "inherit",
@@ -433,7 +434,7 @@ const confirmBtnStyle: React.CSSProperties = {
   background: "#15301f",
   color: "#95f2b5",
   border: "1px solid #26553a",
-  borderRadius: 4,
+  borderRadius: BUTTON_RADIUS,
   padding: "6px 8px",
   cursor: "pointer",
   fontFamily: "inherit",
