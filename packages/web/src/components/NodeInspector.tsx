@@ -38,9 +38,9 @@ export function NodeInspector() {
             <p style={paragraphStyle}>{graph.narrative.public_to_private_sequence}</p>
             <p style={paragraphStyle}>{graph.narrative.facade_and_material_summary}</p>
           </Section>
-          {graph.narrative.node_summaries.length > 0 && (
+          {(graph.narrative.node_summaries?.length ?? 0) > 0 && (
             <Section title="Key Masses">
-              {graph.narrative.node_summaries.slice(0, 5).map((summary) => {
+              {(graph.narrative.node_summaries ?? []).slice(0, 5).map((summary) => {
                 const node = graph.nodes.find((item) => item.id === summary.node_id);
                 return (
                   <button
