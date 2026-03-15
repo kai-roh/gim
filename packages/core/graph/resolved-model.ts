@@ -638,7 +638,7 @@ function resolveRelationVariant(
 }
 
 function clearanceFor(relation: MassRelation): number {
-  return CLEARANCE_METERS[relation.constraints.clearance ?? "medium"] ?? CLEARANCE_METERS.medium;
+  return CLEARANCE_METERS[relation.constraints?.clearance ?? "medium"] ?? CLEARANCE_METERS.medium;
 }
 
 function directionAngle(
@@ -902,7 +902,7 @@ function evaluateResolvedRelation(
     source_id: relation.source,
     target_id: relation.target,
     rule: relation.rule,
-    applied_strategy: relation.constraints.geometry_effect ?? "attach",
+    applied_strategy: relation.constraints?.geometry_effect ?? "attach",
     satisfied,
     notes,
   };
@@ -924,8 +924,8 @@ export function resolveSpatialMassModel(
   const yMap = new Map<string, number>();
   const booleanOperations = new Map<string, ResolvedBooleanOperation[]>();
   const levels = resolveBaseLevels(normalizedGraph);
-  const siteWidth = normalizedGraph.project.site.dimensions[0] || 40;
-  const siteDepth = normalizedGraph.project.site.dimensions[1] || 35;
+  const siteWidth = normalizedGraph.project?.site?.dimensions?.[0] || 40;
+  const siteDepth = normalizedGraph.project?.site?.dimensions?.[1] || 35;
   const seed = resolveSeed(normalizedGraph, options);
   const allocatedTargetGfa = allocateFallbackTargetGfa(normalizedGraph);
   const metricsByNode = new Map<string, NodeQuantitativeMetrics>();
@@ -1276,7 +1276,7 @@ export function resolveSpatialMassModel(
         source_id: relation.source,
         target_id: relation.target,
         rule: relation.rule,
-        applied_strategy: relation.constraints.geometry_effect ?? "attach",
+        applied_strategy: relation.constraints?.geometry_effect ?? "attach",
         satisfied: false,
         notes: ["Related node missing from resolved model."],
       };

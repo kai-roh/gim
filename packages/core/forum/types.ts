@@ -49,9 +49,11 @@ export interface ExpertProfile {
 export type DiscussionPhase =
   | "proposal"
   | "cross_critique"
+  | "mass_consensus"    // Phase 3a: 매스 분절 합의
   | "convergence"
   | "expert_review"
-  | "finalization";
+  | "finalization"
+  | "feedback_opinion";
 
 export type MassNodeKind = "solid" | "void" | "core" | "connector";
 export type NodeHierarchy = "primary" | "secondary" | "tertiary";
@@ -214,11 +216,16 @@ export interface DesignProposal {
   narrative: DesignNarrativeProposal;
 }
 
+// ============================================================
+// Architect Response
+// ============================================================
+
 export interface ArchitectResponse {
   architect_id: string;
   phase: DiscussionPhase;
   stance: string;
   reasoning: string;
+  // v1 (legacy): vertical_zoning 기반
   proposal: DesignProposal;
   critique?: {
     target_architect_id: string;

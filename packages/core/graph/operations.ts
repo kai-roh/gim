@@ -75,3 +75,4 @@ export function toJSON(graph: SpatialMassGraph): string {
 export function fromJSON(json: string): SpatialMassGraph {
   return withResolvedMassModel(JSON.parse(json) as SpatialMassGraph);
 }
+

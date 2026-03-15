@@ -52,8 +52,8 @@ export async function GET() {
         sessions.push({
           id,
           timestamp: id,
-          location: forum.context?.site?.location ?? "Unknown",
-          company: forum.context?.company?.name ?? "Unknown",
+          location: forum.project?.site?.location ?? "Unknown",
+          company: forum.project?.company?.name ?? "Unknown",
           panel: forum.panel ?? [],
           nodeCount,
           relationCount,

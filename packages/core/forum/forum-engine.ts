@@ -3,7 +3,7 @@
 // Primary output is a spatial mass graph with narrative metadata.
 // ============================================================
 
-import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
 import { buildPanel } from "./architect-loader";
 import type {
   ArchitectResponse,
@@ -75,22 +75,20 @@ const DISCUSSION_PHASES = [
   "finalization",
 ] as const;
 
-const ARCHITECT_RESPONSE_FORMAT = {
-  type: "json_schema" as const,
+const ARCHITECT_RESPONSE_TOOL: Anthropic.Tool = {
   name: "architect_response",
-  strict: true,
-  schema: {
-    type: "object",
-    additionalProperties: false,
+  description:
+    "Submit the architect's design response including mass graph proposal, critique, and compromise.",
+  input_schema: {
+    type: "object" as const,
     required: ["architect_id", "phase", "stance", "reasoning", "proposal", "critique", "compromise"],
     properties: {
-      architect_id: { type: "string" },
-      phase: { type: "string", enum: [...DISCUSSION_PHASES] },
-      stance: { type: "string" },
-      reasoning: { type: "string" },
+      architect_id: { type: "string" as const },
+      phase: { type: "string" as const, enum: [...DISCUSSION_PHASES] },
+      stance: { type: "string" as const },
+      reasoning: { type: "string" as const },
       proposal: {
-        type: "object",
-        additionalProperties: false,
+        type: "object" as const,
         required: [
           "massing_concept",
           "structural_strategy",
@@ -100,29 +98,27 @@ const ARCHITECT_RESPONSE_FORMAT = {
           "narrative",
         ],
         properties: {
-          massing_concept: { type: "string" },
+          massing_concept: { type: "string" as const },
           structural_strategy: {
-            type: "object",
-            additionalProperties: false,
+            type: "object" as const,
             required: ["core_strategy", "load_transfer", "special_elements"],
             properties: {
-              core_strategy: { type: "string" },
-              load_transfer: { type: "string" },
+              core_strategy: { type: "string" as const },
+              load_transfer: { type: "string" as const },
               special_elements: {
-                type: "array",
-                items: { type: "string" },
+                type: "array" as const,
+                items: { type: "string" as const },
               },
             },
           },
           key_moves: {
-            type: "array",
-            items: { type: "string" },
+            type: "array" as const,
+            items: { type: "string" as const },
           },
           mass_entities: {
-            type: "array",
+            type: "array" as const,
             items: {
-              type: "object",
-              additionalProperties: false,
+              type: "object" as const,
               required: [
                 "id",
                 "name",
@@ -136,14 +132,13 @@ const ARCHITECT_RESPONSE_FORMAT = {
                 "architect_influences",
               ],
               properties: {
-                id: { type: "string" },
-                name: { type: "string" },
-                kind: { type: "string", enum: [...MASS_NODE_KIND] },
-                hierarchy: { type: "string", enum: [...NODE_HIERARCHY] },
-                spatial_role: { type: "string" },
+                id: { type: "string" as const },
+                name: { type: "string" as const },
+                kind: { type: "string" as const, enum: [...MASS_NODE_KIND] },
+                hierarchy: { type: "string" as const, enum: [...NODE_HIERARCHY] },
+                spatial_role: { type: "string" as const },
                 geometry: {
-                  type: "object",
-                  additionalProperties: false,
+                  type: "object" as const,
                   required: [
                     "primitive",
                     "width",
@@ -163,34 +158,34 @@ const ARCHITECT_RESPONSE_FORMAT = {
                     "story_span",
                   ],
                   properties: {
-                    primitive: { type: "string", enum: [...MASS_PRIMITIVE] },
-                    width: { type: "string", enum: [...RELATIVE_SCALE] },
-                    depth: { type: "string", enum: [...RELATIVE_SCALE] },
-                    height: { type: "string", enum: [...RELATIVE_SCALE] },
-                    proportion: { type: "string", enum: [...RELATIVE_PROPORTION] },
-                    skin: { type: "string", enum: [...SKIN_TRANSPARENCY] },
-                    porosity: { type: "string", enum: [...POROSITY] },
-                    vertical_placement: { type: "string", enum: [...RELATIVE_PLACEMENT] },
-                    span_character: { type: "string", enum: [...SPAN_CHARACTER] },
-                    orientation: { type: "string", enum: [...SURFACE_ORIENTATION] },
-                    story_count: { type: ["integer", "null"], minimum: 1 },
-                    floor_to_floor_m: { type: ["number", "null"], minimum: 0.1 },
-                    target_gfa_m2: { type: ["number", "null"], minimum: 0 },
-                    height_m: { type: ["number", "null"], minimum: 0.1 },
-                    plan_aspect_ratio: { type: ["number", "null"], minimum: 0.2 },
+                    primitive: { type: "string" as const, enum: [...MASS_PRIMITIVE] },
+                    width: { type: "string" as const, enum: [...RELATIVE_SCALE] },
+                    depth: { type: "string" as const, enum: [...RELATIVE_SCALE] },
+                    height: { type: "string" as const, enum: [...RELATIVE_SCALE] },
+                    proportion: { type: "string" as const, enum: [...RELATIVE_PROPORTION] },
+                    skin: { type: "string" as const, enum: [...SKIN_TRANSPARENCY] },
+                    porosity: { type: "string" as const, enum: [...POROSITY] },
+                    vertical_placement: { type: "string" as const, enum: [...RELATIVE_PLACEMENT] },
+                    span_character: { type: "string" as const, enum: [...SPAN_CHARACTER] },
+                    orientation: { type: "string" as const, enum: [...SURFACE_ORIENTATION] },
+                    story_count: { type: ["integer", "null"] as const, minimum: 1 },
+                    floor_to_floor_m: { type: ["number", "null"] as const, minimum: 0.1 },
+                    target_gfa_m2: { type: ["number", "null"] as const, minimum: 0 },
+                    height_m: { type: ["number", "null"] as const, minimum: 0.1 },
+                    plan_aspect_ratio: { type: ["number", "null"] as const, minimum: 0.2 },
                     story_span: {
-                      type: "object",
+                      type: "object" as const,
                       additionalProperties: false,
                       required: ["start", "end"],
                       properties: {
-                        start: { type: ["integer", "null"], minimum: 1 },
-                        end: { type: ["integer", "null"], minimum: 1 },
+                        start: { type: ["integer", "null"] as const, minimum: 1 },
+                        end: { type: ["integer", "null"] as const, minimum: 1 },
                       },
                     },
                   },
                 },
                 variant_space: {
-                  type: "object",
+                  type: "object" as const,
                   additionalProperties: false,
                   required: [
                     "alternative_primitives",
@@ -203,61 +198,59 @@ const ARCHITECT_RESPONSE_FORMAT = {
                   ],
                   properties: {
                     alternative_primitives: {
-                      type: "array",
-                      items: { type: "string", enum: [...MASS_PRIMITIVE] },
+                      type: "array" as const,
+                      items: { type: "string" as const, enum: [...MASS_PRIMITIVE] },
                     },
                     aspect_ratio_range: {
-                      type: "object",
+                      type: "object" as const,
                       additionalProperties: false,
                       required: ["min", "max"],
                       properties: {
-                        min: { type: ["number", "null"], minimum: 0.2 },
-                        max: { type: ["number", "null"], minimum: 0.2 },
+                        min: { type: ["number", "null"] as const, minimum: 0.2 },
+                        max: { type: ["number", "null"] as const, minimum: 0.2 },
                       },
                     },
                     footprint_scale_range: {
-                      type: "object",
+                      type: "object" as const,
                       additionalProperties: false,
                       required: ["min", "max"],
                       properties: {
-                        min: { type: ["number", "null"], minimum: 0.3 },
-                        max: { type: ["number", "null"], minimum: 0.3 },
+                        min: { type: ["number", "null"] as const, minimum: 0.3 },
+                        max: { type: ["number", "null"] as const, minimum: 0.3 },
                       },
                     },
                     height_scale_range: {
-                      type: "object",
+                      type: "object" as const,
                       additionalProperties: false,
                       required: ["min", "max"],
                       properties: {
-                        min: { type: ["number", "null"], minimum: 0.3 },
-                        max: { type: ["number", "null"], minimum: 0.3 },
+                        min: { type: ["number", "null"] as const, minimum: 0.3 },
+                        max: { type: ["number", "null"] as const, minimum: 0.3 },
                       },
                     },
                     radial_distance_scale_range: {
-                      type: "object",
+                      type: "object" as const,
                       additionalProperties: false,
                       required: ["min", "max"],
                       properties: {
-                        min: { type: ["number", "null"], minimum: 0 },
-                        max: { type: ["number", "null"], minimum: 0 },
+                        min: { type: ["number", "null"] as const, minimum: 0 },
+                        max: { type: ["number", "null"] as const, minimum: 0 },
                       },
                     },
-                    angle_jitter_deg: { type: ["number", "null"], minimum: 0 },
-                    freedom: { type: "string", enum: [...VARIANT_FREEDOM] },
+                    angle_jitter_deg: { type: ["number", "null"] as const, minimum: 0 },
+                    freedom: { type: "string" as const, enum: [...VARIANT_FREEDOM] },
                   },
                 },
                 relative_position: {
-                  type: "object",
-                  additionalProperties: false,
+                  type: "object" as const,
                   required: ["anchor_to", "relation_hint"],
                   properties: {
-                    anchor_to: { type: ["string", "null"] },
-                    relation_hint: { type: ["string", "null"] },
+                    anchor_to: { type: ["string", "null"] as const },
+                    relation_hint: { type: ["string", "null"] as const },
                   },
                 },
                 narrative: {
-                  type: "object",
-                  additionalProperties: false,
+                  type: "object" as const,
                   required: [
                     "role",
                     "intent",
@@ -267,27 +260,26 @@ const ARCHITECT_RESPONSE_FORMAT = {
                     "keywords",
                   ],
                   properties: {
-                    role: { type: "string" },
-                    intent: { type: "string" },
-                    spatial_character: { type: "string" },
-                    facade_material_light: { type: "string" },
-                    image_prompt_notes: { type: "string" },
+                    role: { type: "string" as const },
+                    intent: { type: "string" as const },
+                    spatial_character: { type: "string" as const },
+                    facade_material_light: { type: "string" as const },
+                    image_prompt_notes: { type: "string" as const },
                     keywords: {
-                      type: "array",
-                      items: { type: "string" },
+                      type: "array" as const,
+                      items: { type: "string" as const },
                     },
                   },
                 },
                 architect_influences: {
-                  type: "array",
+                  type: "array" as const,
                   items: {
-                    type: "object",
-                    additionalProperties: false,
+                    type: "object" as const,
                     required: ["architect_id", "influence", "rationale"],
                     properties: {
-                      architect_id: { type: "string" },
-                      influence: { type: "number" },
-                      rationale: { type: "string" },
+                      architect_id: { type: "string" as const },
+                      influence: { type: "number" as const },
+                      rationale: { type: "string" as const },
                     },
                   },
                 },
@@ -295,10 +287,9 @@ const ARCHITECT_RESPONSE_FORMAT = {
             },
           },
           mass_relations: {
-            type: "array",
+            type: "array" as const,
             items: {
-              type: "object",
-              additionalProperties: false,
+              type: "object" as const,
               required: [
                 "source_id",
                 "target_id",
@@ -311,35 +302,38 @@ const ARCHITECT_RESPONSE_FORMAT = {
                 "variant_space",
               ],
               properties: {
-                source_id: { type: "string" },
-                target_id: { type: "string" },
-                family: { type: "string", enum: [...MASS_RELATION_FAMILY] },
-                rule: { type: "string", enum: [...MASS_RELATION_RULE] },
-                strength: { type: "string", enum: ["hard", "soft"] },
-                weight: { type: "number" },
-                rationale: { type: "string" },
-                geometry_effect: { type: ["string", "null"], enum: [...GEOMETRY_EFFECT, null] },
+                source_id: { type: "string" as const },
+                target_id: { type: "string" as const },
+                family: { type: "string" as const, enum: [...MASS_RELATION_FAMILY] },
+                rule: { type: "string" as const, enum: [...MASS_RELATION_RULE] },
+                strength: { type: "string" as const, enum: ["hard", "soft"] as const },
+                weight: { type: "number" as const },
+                rationale: { type: "string" as const },
+                geometry_effect: {
+                  type: ["string", "null"] as const,
+                  enum: [...GEOMETRY_EFFECT, null],
+                },
                 variant_space: {
-                  type: "object",
+                  type: "object" as const,
                   additionalProperties: false,
                   required: ["distance_scale_range", "lateral_offset_range_m"],
                   properties: {
                     distance_scale_range: {
-                      type: "object",
+                      type: "object" as const,
                       additionalProperties: false,
                       required: ["min", "max"],
                       properties: {
-                        min: { type: ["number", "null"], minimum: 0 },
-                        max: { type: ["number", "null"], minimum: 0 },
+                        min: { type: ["number", "null"] as const, minimum: 0 },
+                        max: { type: ["number", "null"] as const, minimum: 0 },
                       },
                     },
                     lateral_offset_range_m: {
-                      type: "object",
+                      type: "object" as const,
                       additionalProperties: false,
                       required: ["min", "max"],
                       properties: {
-                        min: { type: ["number", "null"], minimum: 0 },
-                        max: { type: ["number", "null"], minimum: 0 },
+                        min: { type: ["number", "null"] as const, minimum: 0 },
+                        max: { type: ["number", "null"] as const, minimum: 0 },
                       },
                     },
                   },
@@ -348,8 +342,7 @@ const ARCHITECT_RESPONSE_FORMAT = {
             },
           },
           narrative: {
-            type: "object",
-            additionalProperties: false,
+            type: "object" as const,
             required: [
               "project_intro",
               "overall_architectural_concept",
@@ -360,31 +353,30 @@ const ARCHITECT_RESPONSE_FORMAT = {
               "image_direction",
             ],
             properties: {
-              project_intro: { type: "string" },
-              overall_architectural_concept: { type: "string" },
-              massing_strategy_summary: { type: "string" },
-              facade_and_material_summary: { type: "string" },
-              public_to_private_sequence: { type: "string" },
-              spatial_character_summary: { type: "string" },
-              image_direction: { type: "string" },
+              project_intro: { type: "string" as const },
+              overall_architectural_concept: { type: "string" as const },
+              massing_strategy_summary: { type: "string" as const },
+              facade_and_material_summary: { type: "string" as const },
+              public_to_private_sequence: { type: "string" as const },
+              spatial_character_summary: { type: "string" as const },
+              image_direction: { type: "string" as const },
             },
           },
         },
       },
       critique: {
-        type: "array",
+        type: "array" as const,
         items: {
-          type: "object",
-          additionalProperties: false,
+          type: "object" as const,
           required: ["target_architect_id", "point", "counter_proposal"],
           properties: {
-            target_architect_id: { type: "string" },
-            point: { type: "string" },
-            counter_proposal: { type: ["string", "null"] },
+            target_architect_id: { type: "string" as const },
+            point: { type: "string" as const },
+            counter_proposal: { type: ["string", "null"] as const },
           },
         },
       },
-      compromise: { type: ["string", "null"] },
+      compromise: { type: ["string", "null"] as const },
     },
   },
 };
@@ -609,15 +601,19 @@ export function createForumSession(
   };
 }
 
-function parseArchitectResponse(text: string): ArchitectResponse {
-  const jsonMatch =
-    text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/(\{[\s\S]*\})/);
+function parseArchitectResponse(input: string | Record<string, unknown>): ArchitectResponse {
+  let parsed: ArchitectResponse;
 
-  if (!jsonMatch) {
-    throw new Error(`JSON 파싱 실패:\n${text.slice(0, 500)}`);
+  if (typeof input === "string") {
+    const jsonMatch =
+      input.match(/```json\s*([\s\S]*?)\s*```/) || input.match(/(\{[\s\S]*\})/);
+    if (!jsonMatch) {
+      throw new Error(`JSON 파싱 실패:\n${input.slice(0, 500)}`);
+    }
+    parsed = JSON.parse(jsonMatch[1]) as ArchitectResponse;
+  } else {
+    parsed = input as unknown as ArchitectResponse;
   }
-
-  const parsed = JSON.parse(jsonMatch[1]) as ArchitectResponse;
 
   return {
     ...parsed,
@@ -631,55 +627,71 @@ function parseArchitectResponse(text: string): ArchitectResponse {
   };
 }
 
+function extractToolInput(response: Anthropic.Message): Record<string, unknown> {
+  const toolBlock = response.content.find(
+    (block): block is Anthropic.ToolUseBlock => block.type === "tool_use"
+  );
+  if (toolBlock) {
+    return toolBlock.input as Record<string, unknown>;
+  }
+
+  // Fallback: extract text content and parse as JSON
+  const textBlock = response.content.find(
+    (block): block is Anthropic.TextBlock => block.type === "text"
+  );
+  if (textBlock) {
+    return JSON.parse(textBlock.text);
+  }
+
+  throw new Error("No tool_use or text block found in response");
+}
+
 async function callArchitect(
-  client: OpenAI,
+  client: Anthropic,
   systemPrompt: string,
   userPrompt: string,
   model: string
 ): Promise<ArchitectResponse> {
-  const response = await client.responses.create({
+  const response = await client.messages.create({
     model,
-    instructions: systemPrompt,
-    input: userPrompt,
-    max_output_tokens: 7000,
-    text: {
-      format: ARCHITECT_RESPONSE_FORMAT,
-    },
+    system: systemPrompt,
+    messages: [{ role: "user", content: userPrompt }],
+    max_tokens: 7000,
+    tools: [ARCHITECT_RESPONSE_TOOL],
+    tool_choice: { type: "tool", name: "architect_response" },
   });
 
-  const text = extractResponseText(response);
-  return parseArchitectResponse(text);
+  const input = extractToolInput(response);
+  return parseArchitectResponse(input);
 }
 
 async function callArchitectStreaming(
-  client: OpenAI,
+  client: Anthropic,
   systemPrompt: string,
   userPrompt: string,
   model: string,
   architectId: string,
   callbacks?: StreamCallbacks
 ): Promise<ArchitectResponse> {
-  const stream = await client.responses.create({
+  const stream = client.messages.stream({
     model,
-    instructions: systemPrompt,
-    input: userPrompt,
-    max_output_tokens: 7000,
-    text: {
-      format: ARCHITECT_RESPONSE_FORMAT,
-    },
-    stream: true,
+    system: systemPrompt,
+    messages: [{ role: "user", content: userPrompt }],
+    max_tokens: 7000,
+    tools: [ARCHITECT_RESPONSE_TOOL],
+    tool_choice: { type: "tool", name: "architect_response" },
   });
 
-  let fullText = "";
+  let fullJson = "";
 
-  for await (const event of stream) {
-    if (event.type === "response.output_text.delta") {
-      fullText += event.delta;
-      callbacks?.onToken?.(architectId, event.delta);
-    }
-  }
+  stream.on("inputJson", (delta: string) => {
+    fullJson += delta;
+    callbacks?.onToken?.(architectId, delta);
+  });
 
-  return parseArchitectResponse(fullText);
+  const finalMessage = await stream.finalMessage();
+  const input = extractToolInput(finalMessage);
+  return parseArchitectResponse(input);
 }
 
 export async function runPhase(
@@ -688,8 +700,8 @@ export async function runPhase(
   previousResponses?: { id: string; response: ArchitectResponse }[],
   options?: ForumSessionOptions
 ): Promise<ForumRound> {
-  const client = new OpenAI();
-  const model = options?.model ?? process.env.OPENAI_MODEL ?? "gpt-4.1";
+  const client = new Anthropic();
+  const model = options?.model ?? process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-20250514";
   const panel = buildPanel(session.panel, options?.dataDir);
 
   const userPrompt = buildPhasePrompt(phase, session.context, previousResponses);
@@ -727,8 +739,8 @@ export async function runPhaseStreaming(
   previousResponses?: { id: string; response: ArchitectResponse }[],
   options?: ForumSessionOptions
 ): Promise<ForumRound> {
-  const client = new OpenAI();
-  const model = options?.model ?? process.env.OPENAI_MODEL ?? "gpt-4.1";
+  const client = new Anthropic();
+  const model = options?.model ?? process.env.ANTHROPIC_MODEL ?? "claude-sonnet-4-20250514";
   const panel = buildPanel(session.panel, options?.dataDir);
   const userPrompt = buildPhasePrompt(phase, session.context, previousResponses);
 
@@ -791,18 +803,4 @@ export function sessionToForumResult(session: ForumSession) {
     panel: session.panel,
     rounds: session.rounds,
   };
-}
-
-function extractResponseText(response: any): string {
-  if (response.output_text && response.output_text.trim()) {
-    return response.output_text;
-  }
-
-  const fallback = response.output
-    ?.flatMap((item: any) => item.content ?? [])
-    .filter((part: any) => part.type === "output_text" && typeof part.text === "string")
-    .map((part: any) => part.text ?? "")
-    .join("") ?? "";
-
-  return fallback;
 }
